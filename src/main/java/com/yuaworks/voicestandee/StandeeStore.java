@@ -11,15 +11,17 @@ import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * What is kept per Discord user: the standee pictures, the secret overlay address, how the overlay looks, and whether the
- * bot should join automatically.
+ * What is kept per Discord user: the standee pictures, the secret overlay address, how the overlay looks, whether the
+ * bot should join automatically, and whom a streamer has hidden. Also the list of people who may not register pictures.
  *
  * <p>A person can have one picture for each server and one shared picture (scope 0). Which one is shown: the one for the
  * server the voice channel is in, else the shared one, else (in the overlay) the Discord avatar.
@@ -33,6 +35,8 @@ final class StandeeStore {
     static final long SHARED = 0;
     /** How many servers one person can have their own picture for. */
     static final int MAX_SERVER_PICTURES = 20;
+    /** How many people one streamer can hide. */
+    static final int MAX_HIDDEN = 100;
 
     static final Pattern IMAGE_KEY = Pattern.compile("[0-9a-f]{32}");
     private static final SecureRandom RANDOM = new SecureRandom();
@@ -42,32 +46,38 @@ final class StandeeStore {
      * @param token        secret of the overlay address, or null
      * @param settings     how the overlay looks, or null for the defaults
      * @param guildImages  picture keys by server id
+     * @param hidden       people whose pictures this streamer does not want on their overlay
      */
-    record Entry(String imageKey, String token, boolean auto, OverlaySettings settings, Map<Long, String> guildImages) {
-        static final Entry NONE = new Entry(null, null, true, null, Map.of());
+    record Entry(String imageKey, String token, boolean auto, OverlaySettings settings, Map<Long, String> guildImages,
+                 Set<Long> hidden) {
+        static final Entry NONE = new Entry(null, null, true, null, Map.of(), Set.of());
 
         boolean isEmpty() {
-            return imageKey == null && token == null && guildImages.isEmpty();
+            return imageKey == null && token == null && guildImages.isEmpty() && hidden.isEmpty();
         }
 
         Entry withImageKey(String key) {
-            return new Entry(key, token, auto, settings, guildImages);
+            return new Entry(key, token, auto, settings, guildImages, hidden);
         }
 
         Entry withToken(String value) {
-            return new Entry(imageKey, value, auto, settings, guildImages);
+            return new Entry(imageKey, value, auto, settings, guildImages, hidden);
         }
 
         Entry withAuto(boolean value) {
-            return new Entry(imageKey, token, value, settings, guildImages);
+            return new Entry(imageKey, token, value, settings, guildImages, hidden);
         }
 
         Entry withSettings(OverlaySettings value) {
-            return new Entry(imageKey, token, auto, value, guildImages);
+            return new Entry(imageKey, token, auto, value, guildImages, hidden);
         }
 
         Entry withGuildImages(Map<Long, String> value) {
-            return new Entry(imageKey, token, auto, settings, Map.copyOf(value));
+            return new Entry(imageKey, token, auto, settings, Map.copyOf(value), hidden);
+        }
+
+        Entry withHidden(Set<Long> value) {
+            return new Entry(imageKey, token, auto, settings, guildImages, Set.copyOf(value));
         }
 
         String keyFor(long scope) {
@@ -79,6 +89,7 @@ final class StandeeStore {
     private final Path file;
     private final Map<Long, Entry> entries = new ConcurrentHashMap<>();
     private final Map<String, Long> byToken = new ConcurrentHashMap<>();
+    private final Set<Long> banned = ConcurrentHashMap.newKeySet();
 
     StandeeStore(Path dir) throws IOException {
         this.imageDir = dir.resolve("standees");
@@ -118,6 +129,12 @@ final class StandeeStore {
         return e.guildImages().values().stream().findFirst();
     }
 
+    /** The picture keys of the servers this person has registered a picture for, by server id. */
+    Map<Long, String> serverImageKeys(long userId) {
+        Entry e = entries.get(userId);
+        return e == null ? Map.of() : e.guildImages();
+    }
+
     Optional<String> token(long userId) {
         Entry e = entries.get(userId);
         return e == null ? Optional.empty() : Optional.ofNullable(e.token());
@@ -143,6 +160,16 @@ final class StandeeStore {
         return e == null || e.settings() == null ? OverlaySettings.DEFAULT : e.settings();
     }
 
+    /** The people this streamer has hidden from their overlay. */
+    Set<Long> hidden(long streamerId) {
+        Entry e = entries.get(streamerId);
+        return e == null ? Set.of() : e.hidden();
+    }
+
+    boolean isBanned(long userId) {
+        return banned.contains(userId);
+    }
+
     Optional<byte[]> readImage(String key) {
         if (key == null || !IMAGE_KEY.matcher(key).matches()) {
             return Optional.empty();
@@ -156,7 +183,7 @@ final class StandeeStore {
         }
     }
 
-    // ---- changes ---------------------------------------------------------------------------------------
+    // ---- pictures --------------------------------------------------------------------------------------
 
     /** Sets the shared picture. */
     synchronized void setImage(long userId, byte[] png) throws IOException {
@@ -193,14 +220,40 @@ final class StandeeStore {
             return false;
         }
         Entry now = withPicture(old, scope, null);
-        if (now.isEmpty()) {
-            entries.remove(userId);
-        } else {
-            entries.put(userId, now);
-        }
+        store(userId, now);
         deleteImageFile(old.keyFor(scope));
         save();
         return true;
+    }
+
+    /** Removes the shared picture and every server picture of a person (moderation). @return how many pictures were removed */
+    synchronized int removeAllImages(long userId) throws IOException {
+        Entry old = entries.get(userId);
+        if (old == null) {
+            return 0;
+        }
+        int removed = 0;
+        if (old.imageKey() != null) {
+            deleteImageFile(old.imageKey());
+            removed++;
+        }
+        for (String key : old.guildImages().values()) {
+            deleteImageFile(key);
+            removed++;
+        }
+        if (removed > 0) {
+            store(userId, old.withImageKey(null).withGuildImages(Map.of()));
+            save();
+        }
+        return removed;
+    }
+
+    private void store(long userId, Entry entry) {
+        if (entry.isEmpty()) {
+            entries.remove(userId);
+        } else {
+            entries.put(userId, entry);
+        }
     }
 
     private static Entry withPicture(Entry e, long scope, String key) {
@@ -215,6 +268,57 @@ final class StandeeStore {
         }
         return e.withGuildImages(copy);
     }
+
+    // ---- hiding and banning ----------------------------------------------------------------------------
+
+    /** @return false if the streamer already hides {@link #MAX_HIDDEN} people (nothing was changed) */
+    synchronized boolean hide(long streamerId, long targetId) throws IOException {
+        Entry old = entries.getOrDefault(streamerId, Entry.NONE);
+        if (old.hidden().contains(targetId)) {
+            return true;
+        }
+        if (old.hidden().size() >= MAX_HIDDEN) {
+            return false;
+        }
+        Set<Long> next = new HashSet<>(old.hidden());
+        next.add(targetId);
+        entries.put(streamerId, old.withHidden(next));
+        save();
+        return true;
+    }
+
+    /** @return whether the person had been hidden */
+    synchronized boolean unhide(long streamerId, long targetId) throws IOException {
+        Entry old = entries.get(streamerId);
+        if (old == null || !old.hidden().contains(targetId)) {
+            return false;
+        }
+        Set<Long> next = new HashSet<>(old.hidden());
+        next.remove(targetId);
+        store(streamerId, old.withHidden(next));
+        save();
+        return true;
+    }
+
+    /** Removes all pictures of a person and keeps them from registering new ones. */
+    synchronized int ban(long userId) throws IOException {
+        int removed = removeAllImages(userId);
+        if (banned.add(userId)) {
+            save();
+        }
+        return removed;
+    }
+
+    /** @return whether the person had been banned */
+    synchronized boolean unban(long userId) throws IOException {
+        boolean had = banned.remove(userId);
+        if (had) {
+            save();
+        }
+        return had;
+    }
+
+    // ---- address, settings, joining --------------------------------------------------------------------
 
     synchronized String ensureToken(long userId) throws IOException {
         Entry old = entries.getOrDefault(userId, Entry.NONE);
@@ -284,11 +388,24 @@ final class StandeeStore {
                     guildImages.put(Long.parseLong(guildId), g.getString(guildId));
                 }
             }
+            Set<Long> hidden = new HashSet<>();
+            if (u.hasKey("hidden") && !u.isNull("hidden")) {
+                DataArray h = u.getArray("hidden");
+                for (int j = 0; j < h.length(); j++) {
+                    hidden.add(Long.parseLong(h.getString(j)));
+                }
+            }
             Entry e = new Entry(u.getString("imageKey", null), u.getString("token", null), u.getBoolean("auto", true), settings,
-                    Map.copyOf(guildImages));
+                    Map.copyOf(guildImages), Set.copyOf(hidden));
             entries.put(id, e);
             if (e.token() != null) {
                 byToken.put(e.token(), id);
+            }
+        }
+        if (root.hasKey("banned") && !root.isNull("banned")) {
+            DataArray b = root.getArray("banned");
+            for (int i = 0; i < b.length(); i++) {
+                banned.add(Long.parseLong(b.getString(i)));
             }
         }
     }
@@ -311,10 +428,17 @@ final class StandeeStore {
                 e.guildImages().forEach((guildId, key) -> g.put(Long.toString(guildId), key));
                 o.put("guildImages", g);
             }
+            if (!e.hidden().isEmpty()) {
+                DataArray h = DataArray.empty();
+                e.hidden().forEach(target -> h.add(Long.toString(target)));
+                o.put("hidden", h);
+            }
             users.add(o);
         });
+        DataArray bannedIds = DataArray.empty();
+        banned.forEach(id -> bannedIds.add(Long.toString(id)));
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        Files.writeString(tmp, DataObject.empty().put("users", users).toString());
+        Files.writeString(tmp, DataObject.empty().put("users", users).put("banned", bannedIds).toString());
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 

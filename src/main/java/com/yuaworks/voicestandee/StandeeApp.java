@@ -33,13 +33,14 @@ public final class StandeeApp {
         StandeeStore store = new StandeeStore(config.dataDir());
         VoiceCoordinator voice = new VoiceCoordinator(store);
         OverlayServer server = new OverlayServer(config.bind(), config.port(), store, voice::snapshot);
-        StandeeCommands commands = new StandeeCommands(config, store, server::publish);
+        Moderation moderation = new Moderation(config, store, server::publish);
+        StandeeCommands commands = new StandeeCommands(config, store, server::publish, moderation);
 
         JDA jda = JDABuilder.createLight(config.discordToken(), GatewayIntent.GUILD_VOICE_STATES)
                 .enableCache(CacheFlag.VOICE_STATE)
                 .setMemberCachePolicy(MemberCachePolicy.VOICE)
                 .setAudioModuleConfig(new AudioModuleConfig().withDaveSessionFactory(new JDaveSessionFactory()))
-                .addEventListeners(voice, commands)
+                .addEventListeners(voice, commands, moderation)
                 .build()
                 .awaitReady();
         voice.attach(jda, server::publish);

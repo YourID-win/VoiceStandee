@@ -28,6 +28,13 @@ Discord tells a bot who is speaking only by sending that person's voice packets.
 Settings (environment variables): `VOICE_STANDEE_TOKEN` (required), `VOICE_STANDEE_GUILD`, `VOICE_STANDEE_BIND` (default 127.0.0.1), `VOICE_STANDEE_PORT` (default 8780),
 `VOICE_STANDEE_BASE_URL` (the address people put into OBS; default `http://127.0.0.1:PORT`, so only this PC can open it), `VOICE_STANDEE_DATA` (default `./data`: the pictures and the user list).
 
+## Pictures somebody should not have put up
+- `/standee report` (`/立ち絵 報告`): anyone can report a person's picture (3 per hour). The report arrives as a private message to the owner (`VOICE_STANDEE_OWNER`) with the picture and buttons: delete all pictures of that person, delete and ban, or dismiss.
+- `/standee-admin` (`/立ち絵管理`, owner only, checked on every use): `inspect` (look at a person's pictures), `remove`, `ban` (also stops new registrations), `unban`.
+- `/standee hide` (`/立ち絵 非表示`): a streamer replaces one person's picture with their Discord avatar on their own overlay, at once, without waiting for anyone. `unhide` undoes it.
+- Registrations are logged by user id and scope (never the picture); moderation actions are logged too.
+- A user-facing guide, with a short announcement text, is in `docs/user-guide.md` (Japanese).
+
 ## Running it on a server
 `docs/deployment.md` (in Japanese) has the whole procedure for an Ubuntu server: a service user, a systemd unit with limits, a staged and hash-pinned deployment that rolls back when the new version does not start, and publishing the overlay through Cloudflare Tunnel. Scripts are in `deploy/`; `config/voice-standee.env.example` lists the settings.
 

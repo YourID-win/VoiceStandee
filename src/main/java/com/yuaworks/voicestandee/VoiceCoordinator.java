@@ -84,9 +84,12 @@ final class VoiceCoordinator extends ListenerAdapter {
             List<Member> members = new ArrayList<>(channel.getMembers());
             members.removeIf(m -> m.getUser().isBot());
             members.sort(Comparator.<Member, Boolean>comparing(m -> m.getIdLong() != streamerId).thenComparingLong(Member::getIdLong));
+            Set<Long> hidden = store.hidden(streamerId);
             List<Snapshot.Person> people = new ArrayList<>();
             for (Member m : members) {
-                String img = store.imageKey(guild.getIdLong(), m.getIdLong()).map(k -> "/img/" + k + ".png").orElse(null);
+                // a person the streamer has hidden is shown with their Discord avatar instead of their picture
+                String img = hidden.contains(m.getIdLong()) ? null
+                        : store.imageKey(guild.getIdLong(), m.getIdLong()).map(k -> "/img/" + k + ".png").orElse(null);
                 people.add(new Snapshot.Person(m.getId(), m.getEffectiveName(), img,
                         m.getEffectiveAvatar().getUrl(256), talking.contains(m.getIdLong())));
             }

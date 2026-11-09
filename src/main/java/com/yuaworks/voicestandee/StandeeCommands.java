@@ -40,12 +40,14 @@ final class StandeeCommands extends ListenerAdapter {
     private final Config config;
     private final StandeeStore store;
     private final Runnable onChange;
+    private final Moderation moderation;
     private final Map<Long, Long> lastUpload = new ConcurrentHashMap<>();
 
-    StandeeCommands(Config config, StandeeStore store, Runnable onChange) {
+    StandeeCommands(Config config, StandeeStore store, Runnable onChange, Moderation moderation) {
         this.config = config;
         this.store = store;
         this.onChange = onChange;
+        this.moderation = moderation;
     }
 
     static SlashCommandData definition() {
@@ -79,7 +81,22 @@ final class StandeeCommands extends ListenerAdapter {
                                 .setDescriptionLocalization(JA, "ボイスチャンネルに入ったとき、Botが自動で入るかどうか")
                                 .addOptions(new OptionData(OptionType.BOOLEAN, "enabled", "On or off", true)
                                         .setNameLocalization(JA, "有効")
-                                        .setDescriptionLocalization(JA, "オン / オフ")));
+                                        .setDescriptionLocalization(JA, "オン / オフ")),
+                        new SubcommandData("hide", "On your overlay, show this person's Discord avatar instead of their standee")
+                                .setNameLocalization(JA, "非表示")
+                                .setDescriptionLocalization(JA, "あなたのOBS表示で、その人の立ち絵をDiscordのアイコンに置き換える")
+                                .addOptions(personOption()),
+                        new SubcommandData("unhide", "Show this person's standee on your overlay again")
+                                .setNameLocalization(JA, "非表示解除")
+                                .setDescriptionLocalization(JA, "その人の立ち絵を、あなたのOBS表示に戻す")
+                                .addOptions(personOption()),
+                        Moderation.reportSubcommand());
+    }
+
+    private static OptionData personOption() {
+        return new OptionData(OptionType.USER, "user", "The person", true)
+                .setNameLocalization(JA, "相手")
+                .setDescriptionLocalization(JA, "対象の人");
     }
 
     private static OptionData sharedOption(String description, String descriptionJa) {
@@ -110,6 +127,9 @@ final class StandeeCommands extends ListenerAdapter {
                 case "remove" -> remove(event);
                 case "obs" -> obs(event);
                 case "auto" -> auto(event);
+                case "hide" -> hide(event, true);
+                case "unhide" -> hide(event, false);
+                case "report" -> moderation.report(event);
                 default -> reply(event, "?");
             }
         } catch (IOException | RuntimeException e) {
@@ -124,6 +144,10 @@ final class StandeeCommands extends ListenerAdapter {
 
     private void set(SlashCommandInteractionEvent event) {
         long userId = event.getUser().getIdLong();
+        if (store.isBanned(userId)) {
+            reply(event, "いま、立ち絵を登録できない状態です。心当たりがない場合は、Botの管理者に連絡してください。");
+            return;
+        }
         Message.Attachment attachment = event.getOption("image").getAsAttachment();
         long now = System.currentTimeMillis();
         Long last = lastUpload.get(userId);
@@ -156,6 +180,7 @@ final class StandeeCommands extends ListenerAdapter {
                 return;
             }
             onChange.run();
+            LOG.info("Picture registered: user={} scope={}", userId, scope == StandeeStore.SHARED ? "shared" : scope);
             String priority = scope == StandeeStore.SHARED
                     ? "サーバー用の立ち絵を登録しているサーバーでは、そちらが優先されます。"
                     : "このサーバーでは、共通の立ち絵より、こちらが優先されます。";
@@ -236,12 +261,32 @@ final class StandeeCommands extends ListenerAdapter {
                 : "自動参加をオフにしました。Botは自分では入らなくなります。");
     }
 
+    private void hide(SlashCommandInteractionEvent event, boolean hide) throws IOException {
+        long streamer = event.getUser().getIdLong();
+        var target = event.getOption("user").getAsUser();
+        String name = target.getName();
+        if (hide) {
+            if (!store.hide(streamer, target.getIdLong())) {
+                reply(event, "非表示にできるのは、" + StandeeStore.MAX_HIDDEN + "人までです。");
+                return;
+            }
+            onChange.run();
+            reply(event, "あなたのOBS表示で、" + name + " さんの立ち絵を、Discordのアイコンに置き換えました。"
+                    + "元に戻すには `/立ち絵 非表示解除` を使ってください。\n"
+                    + "不適切な立ち絵は、`/立ち絵 報告` で、Botの管理者に知らせることもできます。");
+        } else {
+            boolean had = store.unhide(streamer, target.getIdLong());
+            onChange.run();
+            reply(event, had ? name + " さんの立ち絵を、あなたのOBS表示に戻しました。" : name + " さんは、非表示にしていません。");
+        }
+    }
+
     private static void reply(SlashCommandInteractionEvent event, String text) {
         event.reply(text).setEphemeral(true).queue();
     }
 
     /** The command definitions to register. */
     static List<SlashCommandData> definitions() {
-        return List.of(definition());
+        return List.of(definition(), Moderation.adminDefinition());
     }
 }

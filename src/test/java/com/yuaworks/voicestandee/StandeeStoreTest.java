@@ -78,6 +78,67 @@ class StandeeStoreTest {
     }
 
     @Test
+    void aStreamerCanHideAndUnhidePeopleAndItSurvivesARestart() throws Exception {
+        StandeeStore store = new StandeeStore(dir);
+        assertTrue(store.hidden(1).isEmpty());
+        assertTrue(store.hide(1, 50));
+        assertTrue(store.hide(1, 50), "hiding twice is fine");
+        assertTrue(store.hide(1, 51));
+        assertEquals(java.util.Set.of(50L, 51L), store.hidden(1));
+        assertEquals(java.util.Set.of(50L, 51L), new StandeeStore(dir).hidden(1));
+        assertTrue(store.unhide(1, 50));
+        assertFalse(store.unhide(1, 50));
+        assertEquals(java.util.Set.of(51L), store.hidden(1));
+        assertTrue(store.hidden(2).isEmpty(), "other streamers are not affected");
+    }
+
+    @Test
+    void theNumberOfHiddenPeopleIsLimited() throws Exception {
+        StandeeStore store = new StandeeStore(dir);
+        for (int i = 0; i < StandeeStore.MAX_HIDDEN; i++) {
+            assertTrue(store.hide(1, 1000 + i));
+        }
+        assertFalse(store.hide(1, 99999));
+        assertTrue(store.hide(1, 1000), "one who is hidden already is still accepted");
+    }
+
+    @Test
+    void removingAllPicturesTakesTheSharedAndEveryServerPicture() throws Exception {
+        StandeeStore store = new StandeeStore(dir);
+        store.setImage(7, new byte[] {1});
+        store.setImage(7, 11, new byte[] {2});
+        store.setImage(7, 12, new byte[] {3});
+        String shared = store.imageKey(7).orElseThrow();
+        String serverKey = store.imageKeyOf(7, 11).orElseThrow();
+        store.ensureToken(7);
+
+        assertEquals(3, store.removeAllImages(7));
+        assertTrue(store.imageKey(7).isEmpty());
+        assertTrue(store.serverImageKeys(7).isEmpty());
+        assertTrue(store.readImage(shared).isEmpty());
+        assertTrue(store.readImage(serverKey).isEmpty());
+        assertTrue(store.token(7).isPresent(), "the overlay address is not a picture and stays");
+        assertEquals(0, store.removeAllImages(7));
+        assertEquals(0, store.removeAllImages(404));
+    }
+
+    @Test
+    void aBannedPersonLosesTheirPicturesAndTheBanSurvivesARestart() throws Exception {
+        StandeeStore store = new StandeeStore(dir);
+        store.setImage(8, new byte[] {1});
+        assertFalse(store.isBanned(8));
+        assertEquals(1, store.ban(8));
+        assertTrue(store.isBanned(8));
+        assertTrue(store.imageKey(8).isEmpty());
+        assertTrue(new StandeeStore(dir).isBanned(8));
+
+        assertTrue(store.unban(8));
+        assertFalse(store.isBanned(8));
+        assertFalse(store.unban(8));
+        assertFalse(new StandeeStore(dir).isBanned(8));
+    }
+
+    @Test
     void theAddressSecretIsStableUntilReset() throws Exception {
         StandeeStore store = new StandeeStore(dir);
         String token = store.ensureToken(7);
