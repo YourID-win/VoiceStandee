@@ -17,7 +17,7 @@ java {
 }
 
 dependencies {
-    implementation("net.dv8tion:JDA:6.4.1") {
+    implementation("net.dv8tion:JDA:6.7.0") {
         // opus-java only decodes/encodes audio, which this project never does. tink is needed: it decrypts incoming voice packets.
         exclude(module = "opus-java")
     }
