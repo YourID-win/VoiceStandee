@@ -1,0 +1,65 @@
+/* How the people are drawn. Shared by the OBS page and the preview in the settings page.
+   The look is controlled by these variables, which overlay.js sets from the saved settings. */
+:root {
+  --h: 360px;       /* height of a standee */
+  --gap: 24px;      /* space between people */
+  --align: center;  /* where the row sits */
+  --idle: .62;      /* brightness of people who are quiet */
+  --hop: .02;       /* how high a hop goes, as a share of --h */
+  --speed: .32s;    /* time for one hop */
+  --squash: .01;    /* stretch and squash while hopping */
+  --tilt: 0deg;     /* lean while hopping */
+}
+
+html { height: 100%; }
+body.overlay { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+body.overlay .stage { position: fixed; inset: 0; }
+
+.stage {
+  box-sizing: border-box; padding: 0 24px 8px;
+  display: flex; align-items: flex-end; justify-content: var(--align); gap: var(--gap);
+  pointer-events: none;
+}
+
+.p {
+  display: flex; flex-direction: column; align-items: center;
+  opacity: 0; transform: translateY(14px);
+  transition: opacity .35s ease, transform .35s ease;
+}
+.p.in { opacity: 1; transform: none; }
+.p.out { opacity: 0; transform: translateY(14px); }
+
+.fig {
+  display: flex; flex-direction: column; align-items: center; transform-origin: 50% 100%;
+  filter: brightness(var(--idle)) saturate(.85); transition: filter .2s ease;
+}
+.p.talk .fig { filter: none; }
+.fig img { display: block; height: var(--h); width: auto; max-width: calc(var(--h) * 1.1); object-fit: contain; }
+.fig img.avatar {
+  height: calc(var(--h) * .42); width: calc(var(--h) * .42); max-width: none; border-radius: 50%; object-fit: cover;
+  border: 4px solid rgba(255, 255, 255, .85); box-shadow: 0 4px 18px rgba(0, 0, 0, .35);
+}
+
+.name {
+  margin-top: 6px; max-width: calc(var(--h) * 1.1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 700 22px/1.25 "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
+  color: #fff; text-shadow: 0 0 4px #000, 0 0 4px #000, 0 2px 6px #000;
+}
+.stage:not(.names) .name { display: none; }
+
+/* one hop: leave the ground (stretching), land (squashing), settle */
+@keyframes hop {
+  0%, 100% { transform: translateY(0) rotate(0deg) scale(1, 1); }
+  30% {
+    transform: translateY(calc(var(--h) * var(--hop) * -1)) rotate(var(--tilt))
+      scale(calc(1 - var(--squash) * .5), calc(1 + var(--squash) * .5));
+  }
+  60% { transform: translateY(0) rotate(0deg) scale(calc(1 + var(--squash)), calc(1 - var(--squash))); }
+  80% { transform: translateY(0) rotate(0deg) scale(1, 1); }
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(calc(1 + var(--hop) * 1.5)); }
+}
+.fig.a-hop { animation: hop var(--speed) ease-in-out infinite; }
+.fig.a-pulse { animation: pulse var(--speed) ease-in-out infinite; }

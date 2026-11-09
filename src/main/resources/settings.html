@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>立ち絵オーバーレイの設定</title>
+<link rel="stylesheet" href="/assets/overlay.css">
+<link rel="stylesheet" href="/assets/settings.css">
+</head>
+<body class="settings">
+<main>
+  <header>
+    <h1>立ち絵オーバーレイの設定</h1>
+    <p class="lead">変更は自動で保存され、OBS の表示にもすぐ反映されます(OBS 側の URL はそのままです)。</p>
+  </header>
+
+  <section class="preview">
+    <div class="bar">
+      <label>背景
+        <select id="bg">
+          <option value="checker">透明(市松)</option>
+          <option value="dark">暗い</option>
+          <option value="white">白</option>
+          <option value="green">緑(クロマキー)</option>
+        </select>
+      </label>
+      <label>OBSの画面サイズ
+        <select id="canvas">
+          <option value="1920x1080">1920 × 1080</option>
+          <option value="1280x720">1280 × 720</option>
+          <option value="2560x1440">2560 × 1440</option>
+          <option value="1080x1920">1080 × 1920(縦)</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="sim" checked> プレビューで自動的に喋らせる</label>
+      <span id="status" class="status" role="status"></span>
+    </div>
+    <div id="holder" class="holder">
+      <div id="frame" class="frame bg-checker"><div id="stage" class="stage"></div></div>
+    </div>
+    <p class="note" id="previewNote"></p>
+  </section>
+
+  <section class="panel">
+    <div class="presets">
+      <span class="label">動きのプリセット</span>
+      <button type="button" data-preset="tiny">小刻み</button>
+      <button type="button" data-preset="normal">ふつう</button>
+      <button type="button" data-preset="relaxed">ゆったり</button>
+      <button type="button" data-preset="subtle">控えめ</button>
+      <button type="button" id="reset" class="ghost">すべて初期値に戻す</button>
+    </div>
+
+    <div class="groups">
+      <fieldset>
+        <legend>動き</legend>
+        <label class="row"><span class="lab">種類</span>
+          <select data-key="anim">
+            <option value="hop">跳ねる</option>
+            <option value="pulse">ふくらむ</option>
+            <option value="none">動かない(明るさだけ)</option>
+          </select><output></output>
+        </label>
+        <label class="row"><span class="lab">跳ねる高さ</span>
+          <input type="range" data-key="hopHeight" data-unit="%" min="0" max="10" step="0.1"><output></output>
+        </label>
+        <label class="row"><span class="lab">1回の長さ</span>
+          <input type="range" data-key="hopSpeed" data-unit="秒" min="0.12" max="1.5" step="0.01"><output></output>
+        </label>
+        <p class="hint">短いほど、小刻みで速く跳ねます。</p>
+        <label class="row"><span class="lab">伸び縮み</span>
+          <input type="range" data-key="squash" data-unit="%" min="0" max="6" step="0.1"><output></output>
+        </label>
+        <label class="row"><span class="lab">傾き</span>
+          <input type="range" data-key="tilt" data-unit="°" min="0" max="8" step="0.1"><output></output>
+        </label>
+        <label class="row"><span class="lab">黙っている人の明るさ</span>
+          <input type="range" data-key="idle" data-unit="" min="0.1" max="1" step="0.01"><output></output>
+        </label>
+        <p class="hint">1にすると、黙っている人を暗くしません。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>立ち絵と並び</legend>
+        <label class="row"><span class="lab">高さ</span>
+          <input type="range" data-key="h" data-unit="px" min="60" max="1500" step="10"><output></output>
+        </label>
+        <label class="row"><span class="lab">人どうしの間隔</span>
+          <input type="range" data-key="gap" data-unit="px" min="0" max="400" step="2"><output></output>
+        </label>
+        <label class="row"><span class="lab">並ぶ位置</span>
+          <select data-key="align">
+            <option value="left">左寄せ</option>
+            <option value="center">中央</option>
+            <option value="right">右寄せ</option>
+          </select><output></output>
+        </label>
+        <label class="row"><span class="lab">名前を表示する</span>
+          <input type="checkbox" data-key="names"><output></output>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>OBS に貼る URL</legend>
+        <div class="url">
+          <input type="text" id="obsUrl" readonly>
+          <button type="button" id="copy">コピー</button>
+        </div>
+        <p class="hint">OBSの「ブラウザ」ソースに貼ります。幅と高さは、上の「OBSの画面サイズ」と同じにしてください。
+          この URL は、あなた専用です。他の人には見せないでください。</p>
+      </fieldset>
+    </div>
+  </section>
+</main>
+<script src="/assets/overlay.js"></script>
+<script src="/assets/settings.js"></script>
+</body>
+</html>

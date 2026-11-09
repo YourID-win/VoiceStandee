@@ -1,0 +1,34 @@
+[Unit]
+Description=VoiceStandee (Discord voice standee overlay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=voice-standee
+Group=voice-standee
+WorkingDirectory=/var/lib/voice-standee
+EnvironmentFile=/etc/voice-standee/voice-standee.env
+ExecStart=/opt/voice-standee/bin/voice-standee
+Restart=on-failure
+RestartSec=5
+# a normal stop (SIGTERM) makes the bot leave its voice channels first
+TimeoutStopSec=20
+
+# this runs on the same machine as the Minecraft server: keep it small and polite
+Nice=5
+MemoryHigh=700M
+MemoryMax=900M
+TasksMax=200
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/voice-standee
+
+[Install]
+WantedBy=multi-user.target

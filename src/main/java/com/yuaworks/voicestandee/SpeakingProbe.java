@@ -4,6 +4,8 @@ import club.minnced.discord.jdave.interop.JDaveSessionFactory;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.audio.AudioModuleConfig;
+import net.dv8tion.jda.api.audio.AudioReceiveHandler;
+import net.dv8tion.jda.api.audio.OpusPacket;
 import net.dv8tion.jda.api.audio.SpeakingMode;
 import net.dv8tion.jda.api.audio.hooks.ConnectionListener;
 import net.dv8tion.jda.api.audio.hooks.ConnectionStatus;
@@ -23,6 +25,13 @@ import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.EnumSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The first prototype: can the bot sit in a voice channel and learn who is speaking?
@@ -71,29 +80,56 @@ public final class SpeakingProbe extends ListenerAdapter {
         if (!event.getName().equals("probe") || event.getGuild() == null) {
             return;
         }
-        AudioManager manager = event.getGuild().getAudioManager();
-        switch (String.valueOf(event.getSubcommandName())) {
-            case "join" -> {
-                var voice = event.getMember().getVoiceState();
-                AudioChannel channel = voice == null ? null : voice.getChannel();
-                if (channel == null) {
-                    event.reply("Join a voice channel first.").setEphemeral(true).queue();
-                    return;
+        // Answer at once (Discord gives only 3 seconds), then do the work and report what happened, errors included.
+        log("command: /probe " + event.getSubcommandName() + " from " + event.getUser().getName());
+        event.deferReply(true).queue();
+        try {
+            AudioManager manager = event.getGuild().getAudioManager();
+            switch (String.valueOf(event.getSubcommandName())) {
+                case "join" -> {
+                    var voice = event.getMember().getVoiceState();
+                    AudioChannel channel = voice == null ? null : voice.getChannel();
+                    if (channel == null) {
+                        event.getHook().editOriginal("Join a voice channel first.").queue();
+                        return;
+                    }
+                    boolean deafen = event.getOption("deafen") == null || event.getOption("deafen").getAsBoolean();
+                    manager.setSelfDeafened(deafen);
+                    manager.setConnectionListener(new Listener());
+                    if (activity != null) {
+                        activity.close();
+                    }
+                    activity = new Activity(event.getJDA());
+                    manager.setReceivingHandler(activity);
+                    var selfVoice = event.getGuild().getSelfMember().getVoiceState();
+                    if (selfVoice != null && selfVoice.getChannel() != null) {
+                        // Discord still lists the bot in a channel (e.g. the last run was stopped without /probe leave).
+                        // Asking to join where it already is would change nothing, so leave first and join a moment later.
+                        log("discord still lists the bot in '" + selfVoice.getChannel().getName() + "': leaving first, then joining");
+                        event.getJDA().getDirectAudioController().disconnect(event.getGuild());
+                        LATER.schedule(() -> manager.openAudioConnection(channel), 2, TimeUnit.SECONDS);
+                    } else {
+                        manager.openAudioConnection(channel);
+                    }
+                    log("joining " + channel.getName() + " (self-deafened=" + deafen + ")");
+                    event.getHook().editOriginal("Joining **" + channel.getName() + "**. I only watch who is speaking. I do not listen to or store any audio.").queue();
                 }
-                boolean deafen = event.getOption("deafen") == null || event.getOption("deafen").getAsBoolean();
-                manager.setSelfDeafened(deafen);
-                manager.setConnectionListener(new Listener());
-                manager.openAudioConnection(channel);
-                log("joining " + channel.getName() + " (self-deafened=" + deafen + ")");
-                event.reply("Joining **" + channel.getName() + "**. I only watch who is speaking. I do not listen to or store any audio.")
-                        .setEphemeral(true).queue();
+                case "leave" -> {
+                    manager.setReceivingHandler(null);
+                    if (activity != null) {
+                        activity.close();
+                        activity = null;
+                    }
+                    manager.closeAudioConnection();
+                    log("left");
+                    event.getHook().editOriginal("Left.").queue();
+                }
+                default -> event.getHook().editOriginal("?").queue();
             }
-            case "leave" -> {
-                manager.closeAudioConnection();
-                log("left");
-                event.reply("Left.").setEphemeral(true).queue();
-            }
-            default -> event.reply("?").setEphemeral(true).queue();
+        } catch (Throwable t) {
+            log("ERROR: " + t);
+            t.printStackTrace(System.out);
+            event.getHook().editOriginal("Error: " + t.getClass().getSimpleName() + " - see the console.").queue();
         }
     }
 
@@ -102,6 +138,72 @@ public final class SpeakingProbe extends ListenerAdapter {
         String from = event.getChannelLeft() == null ? "-" : event.getChannelLeft().getName();
         String to = event.getChannelJoined() == null ? "-" : event.getChannelJoined().getName();
         log("voice: " + event.getMember().getEffectiveName() + "  " + from + " -> " + to);
+    }
+
+    private static final ScheduledExecutorService LATER = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "voice-standee-later");
+        t.setDaemon(true);
+        return t;
+    });
+
+    private static volatile Activity activity;
+
+    /**
+     * Learns who is speaking from the fact that voice packets arrive for them: Discord sends nothing for a silent user.
+     * It looks at the sender and the arrival time only. The audio itself is never read, decoded, kept or passed on.
+     */
+    private static final class Activity implements AudioReceiveHandler {
+        private static final long QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(350);
+        private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "voice-standee-activity");
+            t.setDaemon(true);
+            return t;
+        });
+
+        private final JDA jda;
+        private final Map<Long, Long> lastHeard = new ConcurrentHashMap<>();
+        private final Set<Long> speaking = ConcurrentHashMap.newKeySet();
+        private final ScheduledFuture<?> sweep;
+
+        Activity(JDA jda) {
+            this.jda = jda;
+            this.sweep = TIMER.scheduleWithFixedDelay(this::sweepQuiet, 100, 100, TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public boolean canReceiveEncoded() {
+            return true;
+        }
+
+        @Override
+        public void handleEncodedAudio(OpusPacket packet) {
+            long id = packet.getUserId();
+            lastHeard.put(id, System.nanoTime());
+            if (speaking.add(id)) {
+                log("activity: START  " + name(id));
+            }
+        }
+
+        private void sweepQuiet() {
+            long now = System.nanoTime();
+            for (Long id : speaking) {
+                Long last = lastHeard.get(id);
+                if (last == null || now - last > QUIET_NANOS) {
+                    if (speaking.remove(id)) {
+                        log("activity: STOP   " + name(id));
+                    }
+                }
+            }
+        }
+
+        private String name(long id) {
+            User user = jda.getUserById(id);
+            return user == null ? String.valueOf(id) : user.getName();
+        }
+
+        void close() {
+            sweep.cancel(false);
+        }
     }
 
     private static final class Listener implements ConnectionListener {
