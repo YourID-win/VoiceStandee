@@ -78,6 +78,16 @@
           <input type="range" data-key="idle" data-unit="" min="0.1" max="1" step="0.01"><output></output>
         </label>
         <p class="hint">1にすると、黙っている人を暗くしません。</p>
+        <label class="row"><span class="lab">余韻(止まるまで)</span>
+          <input type="range" data-key="release" data-unit="秒" min="0" max="1.5" step="0.05"><output></output>
+        </label>
+        <p class="hint">喋り終わってから、動きが止まるまでの時間です。0にすると、すぐ止まります。声の短い途切れで、ちらつくのを防ぐ効果もあります。</p>
+        <label class="row"><span class="lab">止まり方</span>
+          <select data-key="stopMode">
+            <option value="smooth">一周終えてから(なめらか)</option>
+            <option value="now">すぐ止める</option>
+          </select><output></output>
+        </label>
       </fieldset>
 
       <fieldset>

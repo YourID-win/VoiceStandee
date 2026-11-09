@@ -31,7 +31,7 @@ body.overlay .stage { position: fixed; inset: 0; }
 
 .fig {
   display: flex; flex-direction: column; align-items: center; transform-origin: 50% 100%;
-  filter: brightness(var(--idle)) saturate(.85); transition: filter .2s ease;
+  filter: brightness(var(--idle)) saturate(.85); transition: filter .12s ease;
 }
 .p.talk .fig { filter: none; }
 .fig img { display: block; height: var(--h); width: auto; max-width: calc(var(--h) * 1.1); object-fit: contain; }

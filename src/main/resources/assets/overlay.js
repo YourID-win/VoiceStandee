@@ -11,12 +11,30 @@
   function create(stage, varsTarget) {
     var nodes = new Map();
     var anim = 'hop';
+    var releaseMs = 150;       // how long a person keeps looking "speaking" after the voice stops
+    var stopNow = false;       // stop moving at once instead of finishing the hop that is under way
 
     function setTalking(el, on) {
       var fig = el.firstChild;
       el.classList.toggle('talk', on);
       fig.dataset.want = on ? '1' : '0';
       if (on && anim !== 'none') fig.classList.add('a-' + anim);
+      if (!on && stopNow) fig.classList.remove('a-hop', 'a-pulse');
+    }
+
+    // Speaking turns on at once; it turns off only after the release time, which also hides tiny gaps in the voice.
+    function followSpeaking(el, speaking) {
+      if (speaking) {
+        clearTimeout(el._off);
+        el._off = null;
+        setTalking(el, true);
+      } else if (el.classList.contains('talk')) {
+        if (releaseMs <= 0) {
+          setTalking(el, false);
+        } else if (!el._off) {
+          el._off = setTimeout(function () { el._off = null; setTalking(el, false); }, releaseMs);
+        }
+      }
     }
 
     function apply(s) {
@@ -30,6 +48,8 @@
       st.setProperty('--squash', s.squash / 100);
       st.setProperty('--tilt', s.tilt + 'deg');
       stage.classList.toggle('names', !!s.names);
+      releaseMs = Math.max(0, (s.release === undefined ? 0.15 : s.release) * 1000);
+      stopNow = s.stopMode === 'now';
       if (s.anim !== anim) {
         // only a change of kind restarts the movement; the numbers above take effect while it keeps running
         anim = s.anim;
@@ -66,7 +86,7 @@
       if (img.dataset.src !== src) { img.dataset.src = src; img.src = src; }
       img.classList.toggle('avatar', !p.img);
       el.querySelector('.name').textContent = p.name;
-      setTalking(el, !!p.speaking);
+      followSpeaking(el, !!p.speaking);
     }
 
     // The movement stops only at the end of a cycle, so that it settles instead of snapping back.
@@ -96,7 +116,11 @@
         if (seen.has(id) || el.classList.contains('out')) return;
         el.classList.add('out');
         setTimeout(function () {
-          if (el.classList.contains('out')) { el.remove(); if (nodes.get(id) === el) nodes.delete(id); }
+          if (el.classList.contains('out')) {
+            clearTimeout(el._off);
+            el.remove();
+            if (nodes.get(id) === el) nodes.delete(id);
+          }
         }, 400);
       });
     }

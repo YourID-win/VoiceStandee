@@ -34,7 +34,16 @@ class OverlaySettingsTest {
 
     @Test
     void goodValuesAreKeptAndRoundTrip() {
-        OverlaySettings s = new OverlaySettings(420, 10, true, "left", 0.5, "pulse", 1.6, 0.26, 1.2, 2.5);
+        OverlaySettings s = new OverlaySettings(420, 10, true, "left", 0.5, "pulse", 1.6, 0.26, 1.2, 2.5, 0.4, "now");
         assertEquals(s, OverlaySettings.fromJson(s.toJson()));
+    }
+
+    @Test
+    void theReleaseIsClampedAndTheStopModeIsChecked() {
+        OverlaySettings s = OverlaySettings.fromJson(DataObject.fromJson("{\"release\":99,\"stopMode\":\"never\"}"));
+        assertEquals(1.5, s.release());
+        assertEquals("smooth", s.stopMode());
+        assertEquals(0.0, OverlaySettings.fromJson(DataObject.fromJson("{\"release\":-1}")).release());
+        assertEquals("now", OverlaySettings.fromJson(DataObject.fromJson("{\"stopMode\":\"now\"}")).stopMode());
     }
 }

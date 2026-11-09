@@ -19,13 +19,17 @@ import java.util.Set;
  * @param hopSpeed  seconds for one hop: the smaller, the quicker and finer
  * @param squash    how much the figure stretches and squashes while hopping, in percent
  * @param tilt      how far it leans while hopping, in degrees
+ * @param release   seconds the picture keeps "speaking" after the voice stops (0 = stops at once); also hides tiny gaps
+ * @param stopMode  smooth = finish the hop that is under way, now = stop moving at once
  */
 record OverlaySettings(int h, int gap, boolean names, String align, double idle, String anim,
-                       double hopHeight, double hopSpeed, double squash, double tilt) {
+                       double hopHeight, double hopSpeed, double squash, double tilt, double release, String stopMode) {
 
-    static final OverlaySettings DEFAULT = new OverlaySettings(360, 24, false, "center", 0.62, "hop", 2.0, 0.32, 1.0, 0.0);
+    static final OverlaySettings DEFAULT =
+            new OverlaySettings(360, 24, false, "center", 0.62, "hop", 2.0, 0.32, 1.0, 0.0, 0.15, "smooth");
     private static final Set<String> ALIGNS = Set.of("left", "center", "right");
     private static final Set<String> ANIMS = Set.of("hop", "pulse", "none");
+    private static final Set<String> STOP_MODES = Set.of("smooth", "now");
 
     static OverlaySettings fromJson(DataObject o) {
         OverlaySettings d = DEFAULT;
@@ -39,12 +43,15 @@ record OverlaySettings(int h, int gap, boolean names, String align, double idle,
                 round2(number(o, "hopHeight", d.hopHeight, 0, 10)),
                 round2(number(o, "hopSpeed", d.hopSpeed, 0.12, 1.5)),
                 round2(number(o, "squash", d.squash, 0, 6)),
-                round2(number(o, "tilt", d.tilt, 0, 8)));
+                round2(number(o, "tilt", d.tilt, 0, 8)),
+                round2(number(o, "release", d.release, 0, 1.5)),
+                choice(o, "stopMode", d.stopMode, STOP_MODES));
     }
 
     DataObject toJson() {
         return DataObject.empty().put("h", h).put("gap", gap).put("names", names).put("align", align).put("idle", idle)
-                .put("anim", anim).put("hopHeight", hopHeight).put("hopSpeed", hopSpeed).put("squash", squash).put("tilt", tilt);
+                .put("anim", anim).put("hopHeight", hopHeight).put("hopSpeed", hopSpeed).put("squash", squash).put("tilt", tilt)
+                .put("release", release).put("stopMode", stopMode);
     }
 
     private static double number(DataObject o, String key, double fallback, double min, double max) {

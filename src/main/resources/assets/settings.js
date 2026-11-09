@@ -3,12 +3,12 @@
   'use strict';
 
   var DEFAULTS = { h: 360, gap: 24, names: false, align: 'center', idle: 0.62, anim: 'hop',
-                   hopHeight: 2.0, hopSpeed: 0.32, squash: 1.0, tilt: 0 };
+                   hopHeight: 2.0, hopSpeed: 0.32, squash: 1.0, tilt: 0, release: 0.15, stopMode: 'smooth' };
   var PRESETS = {
-    tiny:    { anim: 'hop', hopHeight: 1.6, hopSpeed: 0.26, squash: 1.2, tilt: 0 },
-    normal:  { anim: 'hop', hopHeight: 3.5, hopSpeed: 0.55, squash: 1.2, tilt: 0 },
-    relaxed: { anim: 'hop', hopHeight: 4.5, hopSpeed: 0.85, squash: 2.0, tilt: 1.5 },
-    subtle:  { anim: 'hop', hopHeight: 0.8, hopSpeed: 0.45, squash: 0.4, tilt: 0 }
+    tiny:    { anim: 'hop', hopHeight: 1.6, hopSpeed: 0.26, squash: 1.2, tilt: 0, release: 0.10, stopMode: 'smooth' },
+    normal:  { anim: 'hop', hopHeight: 3.5, hopSpeed: 0.55, squash: 1.2, tilt: 0, release: 0.15, stopMode: 'smooth' },
+    relaxed: { anim: 'hop', hopHeight: 4.5, hopSpeed: 0.85, squash: 2.0, tilt: 1.5, release: 0.30, stopMode: 'smooth' },
+    subtle:  { anim: 'hop', hopHeight: 0.8, hopSpeed: 0.45, squash: 0.4, tilt: 0, release: 0.15, stopMode: 'smooth' }
   };
 
   function $(id) { return document.getElementById(id); }

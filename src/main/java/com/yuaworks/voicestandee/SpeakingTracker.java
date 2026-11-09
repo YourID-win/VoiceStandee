@@ -20,8 +20,12 @@ import java.util.concurrent.TimeUnit;
  */
 final class SpeakingTracker implements AudioReceiveHandler {
 
-    /** How long without a packet before someone counts as having stopped. Long enough to ride over a breath or a dropped packet. */
-    private static final long QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(450);
+    /**
+     * How long without a packet before someone counts as having stopped. Kept short on purpose: how long the picture keeps
+     * moving after the voice stops is the overlay's "release" setting, which smooths over short gaps and can be tuned.
+     */
+    private static final long QUIET_NANOS = TimeUnit.MILLISECONDS.toNanos(150);
+    private static final long SWEEP_MILLIS = 40;
 
     private static final ScheduledExecutorService TIMER = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "voice-standee-speaking");
@@ -36,7 +40,7 @@ final class SpeakingTracker implements AudioReceiveHandler {
 
     SpeakingTracker(Runnable onChange) {
         this.onChange = onChange;
-        this.sweep = TIMER.scheduleWithFixedDelay(this::sweepQuiet, 100, 100, TimeUnit.MILLISECONDS);
+        this.sweep = TIMER.scheduleWithFixedDelay(this::sweepQuiet, SWEEP_MILLIS, SWEEP_MILLIS, TimeUnit.MILLISECONDS);
     }
 
     @Override
