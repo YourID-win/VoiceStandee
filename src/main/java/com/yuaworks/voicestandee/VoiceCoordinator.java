@@ -43,7 +43,11 @@ final class VoiceCoordinator extends ListenerAdapter {
         return t;
     });
 
+    /** How long a streamer has to stay put before the bot follows (so that channels they only pass through are skipped). */
+    private static final long SETTLE_MILLIS = 2000;
+
     private final StandeeStore store;
+    private final Debouncer settle = new Debouncer(LATER);
     private final Map<Long, SpeakingTracker> trackers = new ConcurrentHashMap<>();
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
     private volatile JDA jda;
@@ -117,7 +121,7 @@ final class VoiceCoordinator extends ListenerAdapter {
                 }
             }
         } else {
-            reconcile(guild, false);
+            settle.trigger(guild.getIdLong(), SETTLE_MILLIS, TimeUnit.MILLISECONDS, () -> reconcile(guild, false));
         }
         onChange.run();
     }
