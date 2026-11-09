@@ -25,7 +25,7 @@ dependencies {
     implementation("club.minnced:jdave-api:0.1.8")
     runtimeOnly("club.minnced:jdave-native-linux-x86-64:0.1.8")
     runtimeOnly("club.minnced:jdave-native-win-x86-64:0.1.8")
-    runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
+    runtimeOnly("org.slf4j:slf4j-simple:2.0.20")
 
     testImplementation(platform("org.junit:junit-bom:5.13.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
