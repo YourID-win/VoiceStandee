@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.LongConsumer;
 
 /**
  * {@code /standee} (shown as {@code /立ち絵} to Japanese users): register or remove the picture, get the address to put
@@ -41,13 +42,16 @@ final class StandeeCommands extends ListenerAdapter {
     private final StandeeStore store;
     private final Runnable onChange;
     private final Moderation moderation;
+    private final LongConsumer streamerChanged;
     private final Map<Long, Long> lastUpload = new ConcurrentHashMap<>();
 
-    StandeeCommands(Config config, StandeeStore store, Runnable onChange, Moderation moderation) {
+    /** @param streamerChanged told when someone gets an overlay address or switches the automatic joining, so the bot can come at once */
+    StandeeCommands(Config config, StandeeStore store, Runnable onChange, Moderation moderation, LongConsumer streamerChanged) {
         this.config = config;
         this.store = store;
         this.onChange = onChange;
         this.moderation = moderation;
+        this.streamerChanged = streamerChanged;
     }
 
     static SlashCommandData definition() {
@@ -236,13 +240,15 @@ final class StandeeCommands extends ListenerAdapter {
         long userId = event.getUser().getIdLong();
         boolean reset = event.getOption("reset") != null && event.getOption("reset").getAsBoolean();
         String token = reset ? store.resetToken(userId) : store.ensureToken(userId);
+        streamerChanged.accept(userId);   // already in a voice channel? then the bot comes now
         String url = config.baseUrl() + "/o/" + token;
         StringBuilder text = new StringBuilder();
         text.append(reset ? "URLを作り直しました。古いURLは使えなくなりました。\n\n" : "");
         text.append("OBSの「ブラウザ」ソースに、次のURLを貼ってください。**このURLは他の人に見せないでください**(あなた専用です)。\n");
         text.append("```\n").append(url).append("\n```");
         text.append("・表示されるのは、あなたと同じボイスチャンネルにいる人です。立ち絵が未登録の人は、Discordのアイコンで表示されます。\n");
-        text.append("・Botは、あなたがこのBotのいるサーバーのボイスチャンネルに入ると、自動で入ります(`/立ち絵 自動参加` で切り替え)。\n");
+        text.append("・Botは、あなたがこのBotのいるサーバーのボイスチャンネルに入ると、自動で入ります(`/立ち絵 自動参加` で切り替え)。"
+                + "すでにボイスチャンネルにいるときは、このコマンドの数秒後に入ります。\n");
         text.append("・Botは「誰が話しているか」だけを見ています。音声は聞かず、保存もしません。\n");
         text.append("・見た目(大きさ、跳ね方、並びなど)は、次の設定ページで調整できます。変更はOBSにすぐ反映されます。\n");
         text.append("```\n").append(url).append("/settings\n```");
@@ -256,6 +262,7 @@ final class StandeeCommands extends ListenerAdapter {
         boolean enabled = event.getOption("enabled").getAsBoolean();
         store.setAuto(event.getUser().getIdLong(), enabled);
         onChange.run();
+        streamerChanged.accept(event.getUser().getIdLong());   // joins now, or leaves, if they are in a voice channel
         reply(event, enabled
                 ? "自動参加をオンにしました。あなたがボイスチャンネルに入ると、Botも入ります。"
                 : "自動参加をオフにしました。Botは自分では入らなくなります。");

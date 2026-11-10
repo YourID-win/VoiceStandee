@@ -34,7 +34,7 @@ public final class StandeeApp {
         VoiceCoordinator voice = new VoiceCoordinator(store);
         OverlayServer server = new OverlayServer(config.bind(), config.port(), store, voice::snapshot);
         Moderation moderation = new Moderation(config, store, server::publish);
-        StandeeCommands commands = new StandeeCommands(config, store, server::publish, moderation);
+        StandeeCommands commands = new StandeeCommands(config, store, server::publish, moderation, voice::streamerChanged);
 
         JDA jda = JDABuilder.createLight(config.discordToken(), GatewayIntent.GUILD_VOICE_STATES)
                 .enableCache(CacheFlag.VOICE_STATE)

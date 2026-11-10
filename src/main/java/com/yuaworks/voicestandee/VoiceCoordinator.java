@@ -129,6 +129,24 @@ final class VoiceCoordinator extends ListenerAdapter {
         onChange.run();
     }
 
+    /**
+     * A streamer's settings changed (they got an overlay address, or switched the automatic joining on or off): look at where they
+     * are now, so that the bot comes to a voice channel they are already in, or leaves when they have just switched it off.
+     */
+    void streamerChanged(long userId) {
+        JDA jda = this.jda;
+        if (jda == null) {
+            return;
+        }
+        for (Guild guild : jda.getGuilds()) {
+            Member member = guild.getMemberById(userId);
+            GuildVoiceState state = member == null ? null : member.getVoiceState();
+            if (state != null && state.getChannel() != null) {
+                settle.trigger(guild.getIdLong(), 500, TimeUnit.MILLISECONDS, () -> reconcile(guild, false));
+            }
+        }
+    }
+
     /** Brings the bot's place in the server in line with where streamers are. */
     private synchronized void reconcile(Guild guild, boolean startup) {
         try {
