@@ -47,37 +47,42 @@ final class StandeeStore {
      * @param settings     how the overlay looks, or null for the defaults
      * @param guildImages  picture keys by server id
      * @param hidden       people whose pictures this streamer does not want on their overlay
+     * @param shareToken   secret of the view-only address that the streamer hands to collaborators, or null
      */
     record Entry(String imageKey, String token, boolean auto, OverlaySettings settings, Map<Long, String> guildImages,
-                 Set<Long> hidden) {
-        static final Entry NONE = new Entry(null, null, true, null, Map.of(), Set.of());
+                 Set<Long> hidden, String shareToken) {
+        static final Entry NONE = new Entry(null, null, true, null, Map.of(), Set.of(), null);
 
         boolean isEmpty() {
-            return imageKey == null && token == null && guildImages.isEmpty() && hidden.isEmpty();
+            return imageKey == null && token == null && guildImages.isEmpty() && hidden.isEmpty() && shareToken == null;
+        }
+
+        Entry withShareToken(String value) {
+            return new Entry(imageKey, token, auto, settings, guildImages, hidden, value);
         }
 
         Entry withImageKey(String key) {
-            return new Entry(key, token, auto, settings, guildImages, hidden);
+            return new Entry(key, token, auto, settings, guildImages, hidden, shareToken);
         }
 
         Entry withToken(String value) {
-            return new Entry(imageKey, value, auto, settings, guildImages, hidden);
+            return new Entry(imageKey, value, auto, settings, guildImages, hidden, shareToken);
         }
 
         Entry withAuto(boolean value) {
-            return new Entry(imageKey, token, value, settings, guildImages, hidden);
+            return new Entry(imageKey, token, value, settings, guildImages, hidden, shareToken);
         }
 
         Entry withSettings(OverlaySettings value) {
-            return new Entry(imageKey, token, auto, value, guildImages, hidden);
+            return new Entry(imageKey, token, auto, value, guildImages, hidden, shareToken);
         }
 
         Entry withGuildImages(Map<Long, String> value) {
-            return new Entry(imageKey, token, auto, settings, Map.copyOf(value), hidden);
+            return new Entry(imageKey, token, auto, settings, Map.copyOf(value), hidden, shareToken);
         }
 
         Entry withHidden(Set<Long> value) {
-            return new Entry(imageKey, token, auto, settings, guildImages, Set.copyOf(value));
+            return new Entry(imageKey, token, auto, settings, guildImages, Set.copyOf(value), shareToken);
         }
 
         String keyFor(long scope) {
@@ -89,6 +94,7 @@ final class StandeeStore {
     private final Path file;
     private final Map<Long, Entry> entries = new ConcurrentHashMap<>();
     private final Map<String, Long> byToken = new ConcurrentHashMap<>();
+    private final Map<String, Long> byShareToken = new ConcurrentHashMap<>();
     private final Set<Long> banned = ConcurrentHashMap.newKeySet();
 
     StandeeStore(Path dir) throws IOException {
@@ -138,6 +144,17 @@ final class StandeeStore {
     Optional<String> token(long userId) {
         Entry e = entries.get(userId);
         return e == null ? Optional.empty() : Optional.ofNullable(e.token());
+    }
+
+    /** Whose overlay a view-only (share) address shows. */
+    Optional<Long> userForShareToken(String token) {
+        return Optional.ofNullable(byShareToken.get(token));
+    }
+
+    /** The streamer's current share address secret, if they have issued one. */
+    Optional<String> shareToken(long userId) {
+        Entry e = entries.get(userId);
+        return e == null ? Optional.empty() : Optional.ofNullable(e.shareToken());
     }
 
     Optional<Long> userForToken(String token) {
@@ -337,6 +354,42 @@ final class StandeeStore {
         return issueToken(userId, old);
     }
 
+    /** The view-only address for collaborators: issued the first time, then the same. */
+    synchronized String ensureShareToken(long userId) throws IOException {
+        Entry old = entries.getOrDefault(userId, Entry.NONE);
+        return old.shareToken() != null ? old.shareToken() : issueShareToken(userId, old);
+    }
+
+    /** A new share address; the old one stops working. */
+    synchronized String resetShareToken(long userId) throws IOException {
+        Entry old = entries.getOrDefault(userId, Entry.NONE);
+        if (old.shareToken() != null) {
+            byShareToken.remove(old.shareToken());
+        }
+        return issueShareToken(userId, old);
+    }
+
+    /** Stops sharing: the share address stops working. */
+    synchronized void clearShareToken(long userId) throws IOException {
+        Entry old = entries.get(userId);
+        if (old == null || old.shareToken() == null) {
+            return;
+        }
+        byShareToken.remove(old.shareToken());
+        entries.put(userId, old.withShareToken(null));
+        save();
+    }
+
+    private String issueShareToken(long userId, Entry old) throws IOException {
+        byte[] bytes = new byte[24];
+        RANDOM.nextBytes(bytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        entries.put(userId, old.withShareToken(token));
+        byShareToken.put(token, userId);
+        save();
+        return token;
+    }
+
     synchronized void setAuto(long userId, boolean auto) throws IOException {
         entries.put(userId, entries.getOrDefault(userId, Entry.NONE).withAuto(auto));
         save();
@@ -396,10 +449,13 @@ final class StandeeStore {
                 }
             }
             Entry e = new Entry(u.getString("imageKey", null), u.getString("token", null), u.getBoolean("auto", true), settings,
-                    Map.copyOf(guildImages), Set.copyOf(hidden));
+                    Map.copyOf(guildImages), Set.copyOf(hidden), u.getString("shareToken", null));
             entries.put(id, e);
             if (e.token() != null) {
                 byToken.put(e.token(), id);
+            }
+            if (e.shareToken() != null) {
+                byShareToken.put(e.shareToken(), id);
             }
         }
         if (root.hasKey("banned") && !root.isNull("banned")) {
@@ -419,6 +475,9 @@ final class StandeeStore {
             }
             if (e.token() != null) {
                 o.put("token", e.token());
+            }
+            if (e.shareToken() != null) {
+                o.put("shareToken", e.shareToken());
             }
             if (e.settings() != null) {
                 o.put("settings", e.settings().toJson());

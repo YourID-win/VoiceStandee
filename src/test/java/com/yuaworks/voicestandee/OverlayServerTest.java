@@ -150,7 +150,7 @@ class OverlayServerTest {
         assertEquals(415, post(url, null, "{}").statusCode());
         assertEquals(415, post(url, "text/plain", "{}").statusCode());
         assertEquals(400, post(url, "application/json", "not json").statusCode());
-        assertEquals(413, post(url, "application/json", "{\"x\":\"" + "a".repeat(5000) + "\"}").statusCode());
+        assertEquals(413, post(url, "application/json", "{\"x\":\"" + "a".repeat(9000) + "\"}").statusCode());
         assertEquals(404, post("/o/" + "q".repeat(32) + "/settings", "application/json", "{}").statusCode());
         assertEquals(405, post("/o/" + token, "application/json", "{}").statusCode());
         assertEquals(OverlaySettings.DEFAULT, store.settings(42), "nothing was saved");
@@ -179,5 +179,37 @@ class OverlayServerTest {
             }
         }
         throw new AssertionError("the feed ended");
+    }
+
+    @Test
+    void aShareAddressShowsTheSameOverlayViewOnly() throws Exception {
+        HttpResponse<String> none = get("/o/" + token + "/share");
+        assertEquals(200, none.statusCode());
+        assertTrue(none.body().contains("\"path\":null") || !none.body().contains("/s/"), none.body());
+
+        HttpResponse<String> issued = post("/o/" + token + "/share", "application/json", "{\"action\":\"issue\"}");
+        assertEquals(200, issued.statusCode());
+        String shareToken = store.shareToken(42).orElseThrow();
+        assertTrue(issued.body().contains("/s/" + shareToken), issued.body());
+
+        HttpResponse<String> page = get("/s/" + shareToken);
+        assertEquals(200, page.statusCode());
+        assertTrue(page.body().contains("/assets/overlay.js"));
+        assertEquals(404, get("/s/" + shareToken + "/settings").statusCode(), "no way to change anything");
+        assertEquals(404, get("/s/" + shareToken + "/share").statusCode());
+        assertEquals(405, post("/s/" + shareToken + "/settings", "application/json", "{}").statusCode(), "nothing can be sent to a share address");
+        assertEquals(404, get("/s/" + "q".repeat(32)).statusCode());
+        assertEquals(404, get("/s/" + token).statusCode(), "the owner's secret is not a share address");
+        assertEquals(404, get("/o/" + shareToken).statusCode(), "a share address does not open the owner's pages");
+
+        assertEquals(400, post("/o/" + token + "/share", "application/json", "{\"action\":\"dance\"}").statusCode());
+        assertEquals(415, post("/o/" + token + "/share", "text/plain", "{\"action\":\"reset\"}").statusCode());
+
+        assertEquals(200, post("/o/" + token + "/share", "application/json", "{\"action\":\"reset\"}").statusCode());
+        assertEquals(404, get("/s/" + shareToken).statusCode(), "the old address stops working");
+
+        String renewed = store.shareToken(42).orElseThrow();
+        assertEquals(200, post("/o/" + token + "/share", "application/json", "{\"action\":\"off\"}").statusCode());
+        assertEquals(404, get("/s/" + renewed).statusCode());
     }
 }

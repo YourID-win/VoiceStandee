@@ -3,7 +3,8 @@
   'use strict';
 
   var DEFAULTS = { h: 360, gap: 24, names: false, align: 'center', idle: 0.62, anim: 'hop',
-                   hopHeight: 2.0, hopSpeed: 0.32, squash: 1.0, tilt: 0, release: 0.15, stopMode: 'smooth' };
+                   hopHeight: 2.0, hopSpeed: 0.32, squash: 1.0, tilt: 0, release: 0.15, stopMode: 'smooth',
+                   layout: 'row', fit: true, enter: 'fade', leave: 'fade', animMs: 350, orderMode: 'auto', order: [] };
   var PRESETS = {
     tiny:    { anim: 'hop', hopHeight: 1.6, hopSpeed: 0.26, squash: 1.2, tilt: 0, release: 0.10, stopMode: 'smooth' },
     normal:  { anim: 'hop', hopHeight: 3.5, hopSpeed: 0.55, squash: 1.2, tilt: 0, release: 0.15, stopMode: 'smooth' },
@@ -24,6 +25,7 @@
   var serverState = { people: [], self: {} };
   var simTalking = new Set();
   var saveTimer = null;
+  var trialHidden = false;
 
   // ---- fields -------------------------------------------------------------------------------------------
 
@@ -92,7 +94,9 @@
     });
   });
   $('reset').addEventListener('click', function () {
-    settings = clone(DEFAULTS);
+    // everything goes back to the first values, except the order the streamer chose
+    var keep = { orderMode: settings.orderMode, order: settings.order };
+    settings = Object.assign(clone(DEFAULTS), keep);
     writeFields();
     changed();
   });
@@ -109,13 +113,14 @@
     var real = serverState.people || [];
     if (real.length > 0) {
       $('previewNote').textContent = 'いま通話にいる人が表示されています。';
-      return real;
+      return trialHidden ? real.slice(0, -1) : real;
     }
     $('previewNote').textContent = 'いまは通話に誰もいないので、見本を表示しています(あなたの立ち絵を使います)。';
     var img = serverState.self && serverState.self.img;
-    return ['A', 'B', 'C'].map(function (letter, i) {
+    var demo = ['A', 'B', 'C'].map(function (letter, i) {
       return { id: 'demo' + i, name: 'プレビュー' + (i + 1), img: img || null, avatar: placeholderAvatar(letter), speaking: false };
     });
+    return trialHidden ? demo.slice(0, -1) : demo;
   }
 
   function refresh() {
@@ -126,6 +131,11 @@
       return copy;
     });
     engine.render({ people: people });
+  }
+
+  function writeFieldsAndOrder() {
+    writeFields();
+    renderOrder();
   }
 
   setInterval(function () {
@@ -140,6 +150,138 @@
     refresh();
   }, 650);
   $('sim').addEventListener('change', refresh);
+
+  // ---- trying the coming and going --------------------------------------------------------------------------
+
+  $('trial').addEventListener('click', function () {
+    trialHidden = true;
+    refresh();
+    setTimeout(function () { trialHidden = false; refresh(); }, Math.max(900, (settings.animMs || 350) + 600));
+  });
+
+  // ---- the order: drag the people ---------------------------------------------------------------------------
+
+  // The list is what was saved, then the people in the channel who are not in it yet; names are the latest seen.
+  function orderRows() {
+    var live = {};
+    (serverState.people || []).forEach(function (p) { live[p.id] = p.name; });
+    var rows = (settings.order || []).map(function (o) {
+      return { id: o.id, name: live[o.id] !== undefined ? live[o.id] : o.name, present: live[o.id] !== undefined };
+    });
+    var known = {};
+    rows.forEach(function (r) { known[r.id] = true; });
+    previewPeople().forEach(function (p) {
+      if (!known[p.id]) rows.push({ id: p.id, name: p.name, present: true });
+    });
+    return rows;
+  }
+
+  var dragging = null;
+  var orderSig = null;
+  function renderOrder() {
+    var list = $('orderList');
+    var rows = orderRows();
+    // the live feed arrives often (every time somebody starts or stops speaking): draw the list only when it changed
+    var sig = rows.map(function (r) { return r.id + '|' + r.name + '|' + r.present; }).join('|');
+    if (sig === orderSig) return;
+    orderSig = sig;
+    list.textContent = '';
+    if (rows.length === 0) {
+      var none = document.createElement('li');
+      none.className = 'empty';
+      none.textContent = '通話に人が入ると、ここに出ます。';
+      list.appendChild(none);
+      return;
+    }
+    rows.forEach(function (r) {
+      var li = document.createElement('li');
+      li.draggable = true;
+      li.dataset.id = r.id;
+      li.dataset.name = r.name;
+      if (!r.present) li.classList.add('absent');
+      var grip = document.createElement('span'); grip.className = 'grip'; grip.textContent = '⋮⋮';
+      var who = document.createElement('span'); who.className = 'who'; who.textContent = r.name;
+      li.appendChild(grip); li.appendChild(who);
+      if (!r.present) {
+        var x = document.createElement('button');
+        x.type = 'button'; x.textContent = '✕'; x.title = '一覧から外す';
+        x.addEventListener('click', function () {
+          settings.order = (settings.order || []).filter(function (o) { return o.id !== r.id; });
+          renderOrder();
+          changed();
+        });
+        li.appendChild(x);
+      }
+      li.addEventListener('dragstart', function (e) {
+        dragging = li;
+        li.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', r.id);
+      });
+      li.addEventListener('dragend', function () {
+        li.classList.remove('dragging');
+        Array.prototype.forEach.call(list.children, function (c) { c.classList.remove('over'); });
+        dragging = null;
+      });
+      li.addEventListener('dragover', function (e) {
+        if (!dragging || dragging === li) return;
+        e.preventDefault();
+        li.classList.add('over');
+      });
+      li.addEventListener('dragleave', function () { li.classList.remove('over'); });
+      li.addEventListener('drop', function (e) {
+        e.preventDefault();
+        li.classList.remove('over');
+        if (!dragging || dragging === li) return;
+        var before = li.compareDocumentPosition(dragging) & Node.DOCUMENT_POSITION_FOLLOWING; // the dragged one is after this
+        list.insertBefore(dragging, before ? li : li.nextSibling);
+        saveOrderFromList();
+      });
+      list.appendChild(li);
+    });
+  }
+
+  function saveOrderFromList() {
+    settings.order = Array.prototype.map.call($('orderList').children, function (li) {
+      return { id: li.dataset.id, name: li.dataset.name };
+    }).filter(function (o) { return /^[0-9]{1,20}$/.test(o.id); });
+    settings.orderMode = 'manual';
+    writeFields();
+    changed();
+  }
+
+  // ---- the share address ------------------------------------------------------------------------------------
+
+  function showShare(path) {
+    $('shareUrl').value = path ? location.origin + path : '';
+    $('shareCopy').disabled = !path;
+    $('shareReset').disabled = !path;
+    $('shareOff').disabled = !path;
+    $('shareIssue').disabled = !!path;
+  }
+  function shareCall(action) {
+    return fetch(base + '/share', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: action })
+    }).then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.json(); })
+      .then(function (j) { showShare(j.path); })
+      .catch(function () { setStatus('共有アドレスを変更できませんでした。ページを開き直してください。', 'bad'); });
+  }
+  $('shareIssue').addEventListener('click', function () { shareCall('issue'); });
+  $('shareReset').addEventListener('click', function () {
+    if (confirm('共有アドレスを作り直します。いまのアドレスは、使えなくなります。')) shareCall('reset');
+  });
+  $('shareOff').addEventListener('click', function () {
+    if (confirm('共有を止めます。いまのアドレスは、使えなくなります。')) shareCall('off');
+  });
+  $('shareCopy').addEventListener('click', function () {
+    var input = $('shareUrl');
+    input.select();
+    var done = function () { $('shareCopy').textContent = 'コピーしました'; setTimeout(function () { $('shareCopy').textContent = 'コピー'; }, 1500); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(input.value).then(done, function () { document.execCommand('copy'); done(); });
+    else { document.execCommand('copy'); done(); }
+  });
+  showShare(null);
+  fetch(base + '/share').then(function (r) { return r.json(); }).then(function (j) { showShare(j.path); }).catch(function () { /* the buttons stay as they are */ });
 
   // ---- frame: the preview is the OBS screen drawn smaller ------------------------------------------------
 
@@ -178,9 +320,10 @@
       // take what is saved once; after that this page is the one that changes it
       loaded = true;
       settings = Object.assign(clone(DEFAULTS), state.settings);
-      writeFields();
+      writeFieldsAndOrder();
       engine.apply(settings);
     }
     refresh();
+    if (!dragging) renderOrder();
   });
 })();

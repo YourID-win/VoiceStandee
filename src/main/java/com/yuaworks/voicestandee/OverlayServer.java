@@ -31,6 +31,9 @@ import java.util.regex.Pattern;
  *   <li>{@code GET /o/<secret>} the overlay page. The secret in the address is what ties it to one streamer.</li>
  *   <li>{@code GET /o/<secret>/events} a server-sent-events feed of that streamer's {@link Snapshot}.</li>
  *   <li>{@code GET /o/<secret>/settings} the page where the look is adjusted; {@code POST} to the same address saves it.</li>
+ *   <li>{@code GET /o/<secret>/share} the view-only address of this overlay for collaborators, or null; {@code POST}
+ *       {@code {"action":"issue"|"reset"|"off"}} issues, renews or stops it.</li>
+ *   <li>{@code GET /s/<share secret>} and {@code /events}: the same overlay, view only (no settings, no way to change anything).</li>
  *   <li>{@code GET /img/<key>.png} a registered picture (the key is random).</li>
  *   <li>{@code GET /assets/<name>} the page's own script and style files.</li>
  * </ul>
@@ -45,11 +48,12 @@ final class OverlayServer {
     private static final List<String> ASSETS = List.of("overlay.js", "overlay.css", "settings.js", "settings.css");
     private static final int MAX_CLIENTS_PER_TOKEN = 8;
     private static final int MAX_CLIENTS = 200;
-    private static final int MAX_SETTINGS_BYTES = 4096;
+    private static final int MAX_SETTINGS_BYTES = 8192;
     private static final String CSP = "default-src 'none'; img-src 'self' https://cdn.discordapp.com data:; "
             + "style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'";
 
     private static final class Client {
+        static final String CLOSE = "\u0000close";
         final long streamer;
         final String token;
         final BlockingQueue<String> queue = new ArrayBlockingQueue<>(32);
@@ -142,6 +146,8 @@ final class OverlayServer {
             }
             if (path.startsWith("/o/")) {
                 overlay(ex, method, path.substring(3));
+            } else if (path.startsWith("/s/")) {
+                shared(ex, method, path.substring(3));
             } else if (path.startsWith("/img/")) {
                 image(ex, path.substring(5));
             } else if (path.startsWith("/assets/")) {
@@ -174,6 +180,10 @@ final class OverlayServer {
         boolean post = "POST".equals(method);
         if (tail.equals("/settings") && post) {
             saveSettings(ex, streamer.get());
+        } else if (tail.equals("/share") && post) {
+            changeShare(ex, streamer.get());
+        } else if (tail.equals("/share")) {
+            reply(ex, 200, "application/json; charset=utf-8", shareJson(streamer.get()), true);
         } else if (post) {
             reply(ex, 405, "text/plain; charset=utf-8", new byte[0], false);
         } else if (tail.isEmpty() || tail.equals("/")) {
@@ -184,6 +194,66 @@ final class OverlayServer {
             events(ex, streamer.get(), token);
         } else {
             notFound(ex);
+        }
+    }
+
+    /** The view-only address: the same overlay and live feed as the streamer's own, and nothing else. */
+    private void shared(HttpExchange ex, String method, String rest) throws IOException {
+        int slash = rest.indexOf('/');
+        String token = slash < 0 ? rest : rest.substring(0, slash);
+        String tail = slash < 0 ? "" : rest.substring(slash);
+        Optional<Long> streamer = TOKEN.matcher(token).matches() ? store.userForShareToken(token) : Optional.empty();
+        if (streamer.isEmpty() || !"GET".equals(method)) {
+            notFound(ex);
+        } else if (tail.isEmpty() || tail.equals("/")) {
+            reply(ex, 200, "text/html; charset=utf-8", overlayPage, true);
+        } else if (tail.equals("/events")) {
+            events(ex, streamer.get(), token);
+        } else {
+            notFound(ex);
+        }
+    }
+
+    private byte[] shareJson(long streamer) {
+        DataObject o = DataObject.empty();
+        Optional<String> token = store.shareToken(streamer);
+        o.put("path", token.map(t -> "/s/" + t).orElse(null));
+        return o.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private void changeShare(HttpExchange ex, long streamer) throws IOException {
+        String type = ex.getRequestHeaders().getFirst("Content-Type");
+        if (type == null || !type.toLowerCase().startsWith("application/json")) {
+            reply(ex, 415, "text/plain; charset=utf-8", new byte[0], false);
+            return;
+        }
+        byte[] body = ex.getRequestBody().readNBytes(257);
+        String action;
+        try {
+            action = body.length > 256 ? "" : DataObject.fromJson(new String(body, StandardCharsets.UTF_8)).getString("action", "");
+        } catch (RuntimeException e) {
+            action = "";
+        }
+        Optional<String> before = store.shareToken(streamer);
+        switch (action) {
+            case "issue" -> store.ensureShareToken(streamer);
+            case "reset" -> store.resetShareToken(streamer);
+            case "off" -> store.clearShareToken(streamer);
+            default -> {
+                reply(ex, 400, "text/plain; charset=utf-8", new byte[0], false);
+                return;
+            }
+        }
+        // whoever is still listening on the old address is let go
+        before.filter(t -> !store.shareToken(streamer).equals(Optional.of(t))).ifPresent(this::closeClients);
+        reply(ex, 200, "application/json; charset=utf-8", shareJson(streamer), true);
+    }
+
+    private void closeClients(String token) {
+        for (Client c : clients) {
+            if (c.token.equals(token)) {
+                c.queue.offer(Client.CLOSE);
+            }
         }
     }
 
@@ -257,6 +327,9 @@ final class OverlayServer {
             out.flush();
             while (true) {
                 String message = client.queue.poll(15, TimeUnit.SECONDS);
+                if (Client.CLOSE.equals(message)) {
+                    break;
+                }
                 String frame = message == null ? ": keep-alive\n\n" : "data: " + message + "\n\n";
                 out.write(frame.getBytes(StandardCharsets.UTF_8));
                 out.flush();
