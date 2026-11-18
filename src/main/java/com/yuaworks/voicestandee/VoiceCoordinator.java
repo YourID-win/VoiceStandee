@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -28,11 +29,12 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Keeps the bot where it is needed, and answers "who is in this streamer's voice channel and who is speaking".
+ * Keeps the bots where they are needed, and answers "who is in this streamer's voice channel and who is speaking".
  *
- * <p>The bot joins by itself when a streamer (someone who has an overlay address and has not switched this off) enters a
- * voice channel, and leaves when no streamer is left in its channel. Discord allows one voice connection per server, so
- * in a server with two streamers in different channels the first one is served.
+ * <p>A bot joins by itself when a streamer (someone who has an overlay address and has not switched this off) enters a
+ * voice channel, and leaves when no streamer is left in its channel. Discord allows one voice connection per bot in a server, so
+ * with one bot a server with two streamers in different channels serves the first one. With several bots (the first one is the main
+ * bot, the others only listen in voice channels) several channels are served at once, see {@link BotAssignment}.
  */
 final class VoiceCoordinator extends ListenerAdapter {
 
@@ -48,38 +50,69 @@ final class VoiceCoordinator extends ListenerAdapter {
 
     private final StandeeStore store;
     private final Debouncer settle = new Debouncer(LATER);
-    private final Map<Long, SpeakingTracker> trackers = new ConcurrentHashMap<>();
+    /** The speaking trackers, by bot and server. */
+    private final Map<String, SpeakingTracker> trackers = new ConcurrentHashMap<>();
+    /** For each server, the channels that have a streamer and since when (so that the one that was first is served first). */
+    private final Map<Long, Map<Long, Long>> since = new ConcurrentHashMap<>();
+    /** The bot and server pairs whose leftover voice connection (from a run that was stopped) has been dealt with. */
+    private final Set<String> cleaned = ConcurrentHashMap.newKeySet();
     private final Set<String> warned = ConcurrentHashMap.newKeySet();
-    private volatile JDA jda;
+    private volatile List<JDA> bots = List.of();
     private volatile Runnable onChange = () -> { };
 
     VoiceCoordinator(StandeeStore store) {
         this.store = store;
     }
 
-    void attach(JDA jda, Runnable onChange) {
-        this.jda = jda;
+    /** The bots: the first one is the main bot (it sees who is where for the overlay). */
+    void attach(List<JDA> bots, Runnable onChange) {
+        this.bots = List.copyOf(bots);
         this.onChange = onChange;
+    }
+
+    /** Looks at every server once (at start, when the bots are all ready). */
+    void reconcileAll() {
+        List<JDA> list = bots;
+        if (list.isEmpty()) {
+            return;
+        }
+        for (Guild guild : list.get(0).getGuilds()) {
+            long id = guild.getIdLong();
+            LATER.schedule(() -> reconcile(id, true), 3, TimeUnit.SECONDS);
+        }
+    }
+
+    private static String key(JDA bot, long guildId) {
+        return bot.getSelfUser().getIdLong() + ":" + guildId;
     }
 
     // ---- what the overlay shows ------------------------------------------------------------------------
 
     Snapshot snapshot(long streamerId) {
-        JDA jda = this.jda;
-        if (jda == null) {
+        List<JDA> list = bots;
+        if (list.isEmpty()) {
             return Snapshot.EMPTY;
         }
-        for (Guild guild : jda.getGuilds()) {
+        for (Guild guild : list.get(0).getGuilds()) {
             Member streamer = guild.getMemberById(streamerId);
             GuildVoiceState state = streamer == null ? null : streamer.getVoiceState();
             AudioChannel channel = state == null ? null : state.getChannel();
             if (channel == null) {
                 continue;
             }
-            AudioChannel botChannel = selfChannel(guild);
-            boolean live = botChannel != null && botChannel.getIdLong() == channel.getIdLong();
-            SpeakingTracker tracker = trackers.get(guild.getIdLong());
-            Set<Long> talking = live && tracker != null ? tracker.speakingIds() : Set.of();
+            // live: one of the bots is in this channel; who is speaking comes from that bot
+            boolean live = false;
+            Set<Long> talking = Set.of();
+            for (JDA bot : list) {
+                Guild view = bot.getGuildById(guild.getIdLong());
+                AudioChannel botChannel = view == null ? null : selfChannel(view);
+                if (botChannel != null && botChannel.getIdLong() == channel.getIdLong()) {
+                    live = true;
+                    SpeakingTracker tracker = trackers.get(key(bot, guild.getIdLong()));
+                    talking = tracker == null ? Set.of() : tracker.speakingIds();
+                    break;
+                }
+            }
 
             List<Member> members = new ArrayList<>(channel.getMembers());
             members.removeIf(m -> m.getUser().isBot());
@@ -102,107 +135,151 @@ final class VoiceCoordinator extends ListenerAdapter {
 
     @Override
     public void onGuildReady(GuildReadyEvent event) {
-        Guild guild = event.getGuild();
-        LATER.schedule(() -> reconcile(guild, true), 3, TimeUnit.SECONDS);
+        long guildId = event.getGuild().getIdLong();
+        LATER.schedule(() -> reconcile(guildId, true), 3, TimeUnit.SECONDS);
     }
 
     @Override
     public void onGuildJoin(GuildJoinEvent event) {
-        Guild guild = event.getGuild();
-        LATER.schedule(() -> reconcile(guild, false), 3, TimeUnit.SECONDS);
+        long guildId = event.getGuild().getIdLong();
+        LATER.schedule(() -> reconcile(guildId, false), 3, TimeUnit.SECONDS);
     }
 
     @Override
     public void onGuildVoiceUpdate(GuildVoiceUpdateEvent event) {
         Guild guild = event.getGuild();
         Member member = event.getMember();
+        long guildId = guild.getIdLong();
         if (member.getUser().isBot()) {
             if (member.equals(guild.getSelfMember()) && event.getChannelJoined() == null) {
-                SpeakingTracker tracker = trackers.remove(guild.getIdLong());
+                SpeakingTracker tracker = trackers.remove(key(event.getJDA(), guildId));
                 if (tracker != null) {
                     tracker.stop();
                 }
             }
         } else {
-            settle.trigger(guild.getIdLong(), SETTLE_MILLIS, TimeUnit.MILLISECONDS, () -> reconcile(guild, false));
+            settle.trigger(guildId, SETTLE_MILLIS, TimeUnit.MILLISECONDS, () -> reconcile(guildId, false));
         }
         onChange.run();
     }
 
     /**
      * A streamer's settings changed (they got an overlay address, or switched the automatic joining on or off): look at where they
-     * are now, so that the bot comes to a voice channel they are already in, or leaves when they have just switched it off.
+     * are now, so that a bot comes to a voice channel they are already in, or leaves when they have just switched it off.
      */
     void streamerChanged(long userId) {
-        JDA jda = this.jda;
-        if (jda == null) {
+        List<JDA> list = bots;
+        if (list.isEmpty()) {
             return;
         }
-        for (Guild guild : jda.getGuilds()) {
+        for (Guild guild : list.get(0).getGuilds()) {
             Member member = guild.getMemberById(userId);
             GuildVoiceState state = member == null ? null : member.getVoiceState();
             if (state != null && state.getChannel() != null) {
-                settle.trigger(guild.getIdLong(), 500, TimeUnit.MILLISECONDS, () -> reconcile(guild, false));
+                long guildId = guild.getIdLong();
+                settle.trigger(guildId, 500, TimeUnit.MILLISECONDS, () -> reconcile(guildId, false));
             }
         }
     }
 
-    /** Brings the bot's place in the server in line with where streamers are. */
-    private synchronized void reconcile(Guild guild, boolean startup) {
+    /** Brings the places of the bots in the server in line with where streamers are. */
+    private synchronized void reconcile(long guildId, boolean startup) {
         try {
-            AudioChannel current = selfChannel(guild);
-            if (startup && current != null) {
-                // Discord still lists the bot in a channel (the last run was stopped without leaving). Asking to join where it
-                // already is changes nothing for Discord, so leave first; the resulting voice event then brings the bot back.
-                LOG.info("Discord still lists the bot in '{}' ({}): leaving first", current.getName(), guild.getName());
-                jda.getDirectAudioController().disconnect(guild);
-                LATER.schedule(() -> reconcile(guild, false), 5, TimeUnit.SECONDS);
+            List<JDA> list = bots;
+            if (list.isEmpty() || list.get(0).getGuildById(guildId) == null) {
                 return;
             }
-            AudioChannel wanted = wantedChannel(guild, current);
-            if (wanted == null) {
-                if (current != null) {
-                    leave(guild);
+            // A bot that Discord still lists in a channel (the last run was stopped without leaving): asking to join where it already
+            // is changes nothing for Discord, so it leaves first (once for each bot and server); the voice event then brings it back.
+            boolean disconnected = false;
+            for (JDA bot : list) {
+                Guild view = bot.getGuildById(guildId);
+                if (view == null) {
+                    continue;
                 }
+                boolean first = cleaned.add(key(bot, guildId));
+                AudioChannel current = selfChannel(view);
+                if (startup && first && current != null) {
+                    LOG.info("Discord still lists the bot {} in '{}' ({}): leaving first", bot.getSelfUser().getName(), current.getName(), view.getName());
+                    bot.getDirectAudioController().disconnect(view);
+                    disconnected = true;
+                }
+            }
+            if (disconnected) {
+                LATER.schedule(() -> reconcile(guildId, false), 5, TimeUnit.SECONDS);
                 return;
             }
-            if (current == null || current.getIdLong() != wanted.getIdLong()) {
-                join(guild, wanted);
+
+            Guild main = list.get(0).getGuildById(guildId);
+            Map<Long, Long> channelSince = since.computeIfAbsent(guildId, id -> new ConcurrentHashMap<>());
+            Set<Long> qualifying = new LinkedHashSet<>();
+            for (VoiceChannel channel : main.getVoiceChannels()) {
+                if (channel.getMembers().stream().anyMatch(m -> !m.getUser().isBot() && store.isAutoStreamer(m.getIdLong()))) {
+                    qualifying.add(channel.getIdLong());
+                }
             }
+            channelSince.keySet().retainAll(qualifying);
+            long now = System.currentTimeMillis();
+            for (long id : qualifying) {
+                channelSince.putIfAbsent(id, now);
+            }
+
+            List<BotAssignment.Bot> states = new ArrayList<>();
+            for (int i = 0; i < list.size(); i++) {
+                Guild view = list.get(i).getGuildById(guildId);
+                if (view != null) {
+                    AudioChannel current = selfChannel(view);
+                    states.add(new BotAssignment.Bot(i, current == null ? null : current.getIdLong()));
+                }
+            }
+            List<BotAssignment.Wanted> wanted = new ArrayList<>();
+            for (long id : qualifying) {
+                wanted.add(new BotAssignment.Wanted(id, channelSince.get(id)));
+            }
+            BotAssignment.Plan plan = BotAssignment.plan(states, wanted, (index, channelId) -> mayJoin(list.get(index), guildId, channelId));
+
+            for (int index : plan.leaves()) {
+                leave(list.get(index), list.get(index).getGuildById(guildId));
+            }
+            for (Map.Entry<Integer, Long> entry : plan.joins().entrySet()) {
+                JDA bot = list.get(entry.getKey());
+                Guild view = bot.getGuildById(guildId);
+                AudioChannel channel = view.getChannelById(AudioChannel.class, entry.getValue());
+                if (channel != null) {
+                    join(bot, view, channel);
+                }
+            }
+            for (long channelId : plan.unserved()) {
+                if (warned.add("busy:" + channelId)) {
+                    LOG.warn("No free bot for the voice channel {} in {} (every bot is serving another channel, or cannot join)", channelId, main.getName());
+                }
+            }
+            // a channel that is served later should be reported again if it is left without a bot another time
+            warned.removeIf(w -> w.startsWith("busy:") && !plan.unserved().contains(Long.parseLong(w.substring(5))));
         } catch (RuntimeException e) {
-            LOG.warn("Could not update the voice connection in {}", guild.getName(), e);
+            LOG.warn("Could not update the voice connections of server {}", guildId, e);
         }
     }
 
-    /** The channel that has a streamer in it; the one the bot is in already is kept when it qualifies. */
-    private AudioChannel wantedChannel(Guild guild, AudioChannel current) {
-        AudioChannel first = null;
-        for (VoiceChannel channel : guild.getVoiceChannels()) {
-            boolean hasStreamer = channel.getMembers().stream()
-                    .anyMatch(m -> !m.getUser().isBot() && store.isAutoStreamer(m.getIdLong()));
-            if (!hasStreamer) {
-                continue;
-            }
-            if (current != null && channel.getIdLong() == current.getIdLong()) {
-                return channel;
-            }
-            if (first == null) {
-                first = channel;
-            }
+    /** Whether the bot can see and join the channel (a missing permission is reported once). */
+    private boolean mayJoin(JDA bot, long guildId, long channelId) {
+        Guild view = bot.getGuildById(guildId);
+        AudioChannel channel = view == null ? null : view.getChannelById(AudioChannel.class, channelId);
+        if (channel == null) {
+            return false;
         }
-        return first;
+        if (view.getSelfMember().hasPermission(channel, Permission.VIEW_CHANNEL, Permission.VOICE_CONNECT)) {
+            return true;
+        }
+        if (warned.add(bot.getSelfUser().getId() + ":" + channel.getId())) {
+            LOG.warn("The bot {} has no permission to see and join '{}' in {}", bot.getSelfUser().getName(), channel.getName(), view.getName());
+        }
+        return false;
     }
 
-    private void join(Guild guild, AudioChannel channel) {
-        Member self = guild.getSelfMember();
-        if (!self.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.VOICE_CONNECT)) {
-            if (warned.add(channel.getId())) {
-                LOG.warn("No permission to see and join '{}' in {}", channel.getName(), guild.getName());
-            }
-            return;
-        }
+    private void join(JDA bot, Guild guild, AudioChannel channel) {
         AudioManager audio = guild.getAudioManager();
-        SpeakingTracker tracker = trackers.computeIfAbsent(guild.getIdLong(), id -> new SpeakingTracker(() -> onChange.run()));
+        SpeakingTracker tracker = trackers.computeIfAbsent(key(bot, guild.getIdLong()), id -> new SpeakingTracker(() -> onChange.run()));
         audio.setSelfDeafened(false); // a deafened bot is sent no voice packets, which is all the speaking detection works from
         audio.setReceivingHandler(tracker);
         audio.setConnectionListener(new ConnectionListener() {
@@ -213,37 +290,35 @@ final class VoiceCoordinator extends ListenerAdapter {
 
             @Override
             public void onStatusChange(ConnectionStatus status) {
-                LOG.info("Voice connection in {}: {}", guild.getName(), status);
+                LOG.info("Voice connection of {} in {}: {}", bot.getSelfUser().getName(), guild.getName(), status);
             }
         });
-        LOG.info("Joining '{}' in {}", channel.getName(), guild.getName());
+        LOG.info("{} joins '{}' in {}", bot.getSelfUser().getName(), channel.getName(), guild.getName());
         audio.openAudioConnection(channel);
     }
 
-    private void leave(Guild guild) {
-        LOG.info("Leaving the voice channel in {}", guild.getName());
-        SpeakingTracker tracker = trackers.remove(guild.getIdLong());
+    private void leave(JDA bot, Guild guild) {
+        LOG.info("{} leaves the voice channel in {}", bot.getSelfUser().getName(), guild.getName());
+        SpeakingTracker tracker = trackers.remove(key(bot, guild.getIdLong()));
         if (tracker != null) {
             tracker.stop();
         }
         AudioManager audio = guild.getAudioManager();
         audio.setReceivingHandler(null);
         if (audio.getConnectionStatus() == ConnectionStatus.NOT_CONNECTED) {
-            jda.getDirectAudioController().disconnect(guild);
+            bot.getDirectAudioController().disconnect(guild);
         } else {
             audio.closeAudioConnection();
         }
     }
 
-    /** Leaves every voice channel; for shutdown, so that Discord does not keep listing the bot. */
+    /** Leaves every voice channel; for shutdown, so that Discord does not keep listing the bots. */
     void leaveAll() {
-        JDA jda = this.jda;
-        if (jda == null) {
-            return;
-        }
-        for (Guild guild : jda.getGuilds()) {
-            if (selfChannel(guild) != null) {
-                leave(guild);
+        for (JDA bot : bots) {
+            for (Guild guild : bot.getGuilds()) {
+                if (selfChannel(guild) != null) {
+                    leave(bot, guild);
+                }
             }
         }
     }
