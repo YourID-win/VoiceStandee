@@ -10,6 +10,14 @@ body.settings {
   font: 15px/1.6 "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
 }
 main { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+/* On a wide screen the preview stays on the left while the settings scroll on the right, so that a change can be seen at once. */
+@media (min-width: 1200px) {
+  main { max-width: 1840px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .layout .preview { position: sticky; top: 12px; margin-bottom: 0; }
+  .layout .panel { margin-bottom: 0; }
+  .layout .groups { grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); }
+}
 h1 { font-size: 22px; margin: 0 0 4px; }
 .lead { margin: 0 0 16px; color: var(--muted); }
 
@@ -24,7 +32,7 @@ h1 { font-size: 22px; margin: 0 0 4px; }
 .status.ok { color: #2e9d5b; }
 .status.bad { color: #d4493e; }
 
-.holder { position: relative; overflow: hidden; border-radius: 8px; border: 1px solid var(--line); }
+.holder { position: relative; overflow: hidden; border-radius: 8px; border: 1px solid var(--line); margin: 0 auto; }
 .frame { position: absolute; left: 0; top: 0; transform-origin: 0 0; overflow: hidden; }
 .frame .stage { position: absolute; inset: 0; }
 .frame.bg-checker {
