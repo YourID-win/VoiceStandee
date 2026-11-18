@@ -60,6 +60,7 @@
 
   function changed() {
     engine.apply(settings);
+    refresh();
     setStatus('', '');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 350);
@@ -244,7 +245,9 @@
   function saveOrderFromList() {
     settings.order = Array.prototype.map.call($('orderList').children, function (li) {
       return { id: li.dataset.id, name: li.dataset.name };
-    }).filter(function (o) { return /^[0-9]{1,20}$/.test(o.id); });
+    });
+    // the sample people (shown while nobody is in the channel) are kept here, so that the preview follows the drag too;
+    // the server keeps only real Discord ids
     settings.orderMode = 'manual';
     writeFields();
     changed();
@@ -288,10 +291,16 @@
   function fitFrame() {
     var size = $('canvas').value.split('x');
     var w = parseInt(size[0], 10), h = parseInt(size[1], 10);
-    var scale = Math.min(1, holder.clientWidth / w);
+    var box = holder.parentNode, cs = getComputedStyle(box);
+    var column = box.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    // side by side with the settings (a wide screen), the preview must also fit in the height of the window
+    var wide = window.matchMedia('(min-width: 1200px)').matches;
+    var room = wide ? Math.max(240, window.innerHeight - 170) : Infinity;
+    var scale = Math.min(1, column / w, room / h);
     frame.style.width = w + 'px';
     frame.style.height = h + 'px';
     frame.style.transform = 'scale(' + scale + ')';
+    holder.style.width = Math.round(w * scale) + 'px';
     holder.style.height = Math.round(h * scale) + 'px';
   }
   $('canvas').addEventListener('change', fitFrame);
