@@ -9,6 +9,8 @@ import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
 import net.dv8tion.jda.api.utils.cache.CacheFlag;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,7 +46,20 @@ public final class StandeeApp {
                 .addEventListeners(voice, commands, moderation)
                 .build()
                 .awaitReady();
-        voice.attach(jda, server::publish);
+        // more bots, for several voice channels at the same time: they only listen (no commands, no settings)
+        List<JDA> bots = new ArrayList<>();
+        bots.add(jda);
+        for (String token : config.extraTokens()) {
+            bots.add(JDABuilder.createLight(token, GatewayIntent.GUILD_VOICE_STATES)
+                    .enableCache(CacheFlag.VOICE_STATE)
+                    .setMemberCachePolicy(MemberCachePolicy.VOICE)
+                    .setAudioModuleConfig(new AudioModuleConfig().withDaveSessionFactory(new JDaveSessionFactory()))
+                    .addEventListeners(voice)
+                    .build()
+                    .awaitReady());
+        }
+        voice.attach(bots, server::publish);
+        voice.reconcileAll();
         server.start();
 
         if (!config.devGuildId().isBlank() && jda.getGuildById(config.devGuildId()) != null) {
@@ -66,15 +81,19 @@ public final class StandeeApp {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             voice.leaveAll();
             server.stop();
-            jda.shutdown();
+            for (JDA bot : bots) {
+                bot.shutdown();
+            }
             try {
-                jda.awaitShutdown(5, TimeUnit.SECONDS);
+                for (JDA bot : bots) {
+                    bot.awaitShutdown(5, TimeUnit.SECONDS);
+                }
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
             }
         }, "voice-standee-shutdown"));
 
-        System.out.println("Ready as " + jda.getSelfUser().getName() + ". Overlay server on " + config.bind() + ":" + server.port()
+        System.out.println("Ready as " + jda.getSelfUser().getName() + (bots.size() > 1 ? " (+" + (bots.size() - 1) + " more bots)" : "") + ". Overlay server on " + config.bind() + ":" + server.port()
                 + ", addresses are built on " + config.baseUrl());
     }
 }

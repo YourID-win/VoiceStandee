@@ -25,7 +25,7 @@ Discord tells a bot who is speaking only by sending that person's voice packets.
 3. In PowerShell: `$env:VOICE_STANDEE_TOKEN = "<token>"`, optionally `$env:VOICE_STANDEE_GUILD = "<test server id>"` (commands then appear at once), and `.\gradlew run`.
 4. Stop it with Ctrl+C: it leaves the voice channel by itself first.
 
-Settings (environment variables): `VOICE_STANDEE_TOKEN` (required), `VOICE_STANDEE_GUILD`, `VOICE_STANDEE_BIND` (default 127.0.0.1), `VOICE_STANDEE_PORT` (default 8780),
+Settings (environment variables): `VOICE_STANDEE_TOKEN` (required), `VOICE_STANDEE_EXTRA_TOKENS` (more bots, see docs/deployment.md), `VOICE_STANDEE_GUILD`, `VOICE_STANDEE_BIND` (default 127.0.0.1), `VOICE_STANDEE_PORT` (default 8780),
 `VOICE_STANDEE_BASE_URL` (the address people put into OBS; default `http://127.0.0.1:PORT`, so only this PC can open it), `VOICE_STANDEE_DATA` (default `./data`: the pictures and the user list).
 
 ## Pictures somebody should not have put up
