@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Runs only the overlay page with made-up people who take turns speaking, so that the look and the OBS settings can be tried
  * without Discord. {@code .\gradlew demo}, then open the address it prints (in a browser, or as an OBS browser source).
+ * {@code .\gradlew demo --args="8790 empty"} starts with nobody in the channel (the settings page then shows its sample people).
  */
 public final class OverlayDemo {
 
@@ -45,6 +46,9 @@ public final class OverlayDemo {
         OverlayServer[] holder = new OverlayServer[1];
         OverlayServer server = new OverlayServer("127.0.0.1", port, store, streamer -> {
             List<Snapshot.Person> people = new ArrayList<>();
+            if (args.length > 1 && args[1].equals("empty")) {
+                return Snapshot.EMPTY;
+            }
             for (int i = 0; i < 3; i++) {
                 String img = store.imageKey(ids[i]).map(k -> "/img/" + k + ".png").orElse(null);
                 people.add(new Snapshot.Person(Long.toString(ids[i]), names[i], img, avatar, talking[i]));

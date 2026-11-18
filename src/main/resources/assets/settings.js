@@ -60,6 +60,7 @@
 
   function changed() {
     engine.apply(settings);
+    refresh();
     setStatus('', '');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(save, 350);
@@ -244,7 +245,9 @@
   function saveOrderFromList() {
     settings.order = Array.prototype.map.call($('orderList').children, function (li) {
       return { id: li.dataset.id, name: li.dataset.name };
-    }).filter(function (o) { return /^[0-9]{1,20}$/.test(o.id); });
+    });
+    // the sample people (shown while nobody is in the channel) are kept here, so that the preview follows the drag too;
+    // the server keeps only real Discord ids
     settings.orderMode = 'manual';
     writeFields();
     changed();
