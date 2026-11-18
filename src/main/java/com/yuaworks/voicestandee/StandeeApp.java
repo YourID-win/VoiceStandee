@@ -4,6 +4,7 @@ import club.minnced.discord.jdave.interop.JDaveSessionFactory;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.JDABuilder;
 import net.dv8tion.jda.api.audio.AudioModuleConfig;
+import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
 import net.dv8tion.jda.api.utils.cache.CacheFlag;
@@ -50,6 +51,16 @@ public final class StandeeApp {
             jda.getGuildById(config.devGuildId()).updateCommands().addCommands(StandeeCommands.definitions()).queue();
         } else {
             jda.updateCommands().addCommands(StandeeCommands.definitions()).queue();
+            // Commands that were once registered for a single server (the test setup) stay there and would show up twice next to the
+            // global ones: clear them. Only this bot's own commands are touched.
+            for (Guild guild : jda.getGuilds()) {
+                guild.retrieveCommands().queue(old -> {
+                    if (!old.isEmpty()) {
+                        guild.updateCommands().queue(done -> System.out.println(
+                                "Removed " + old.size() + " leftover server commands of '" + guild.getName() + "' (they duplicated the global ones)."));
+                    }
+                });
+            }
         }
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
