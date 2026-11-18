@@ -61,6 +61,19 @@ select, input[type="text"] {
 }
 .hint { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
 
+.order { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.order li {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); cursor: grab; user-select: none;
+}
+.order li .grip { color: var(--muted); letter-spacing: -2px; }
+.order li .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.order li.absent .who { color: var(--muted); }
+.order li.absent .who::after { content: "(いま通話にいない)"; margin-left: 8px; font-size: 12px; }
+.order li.dragging { opacity: .4; }
+.order li.over { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+.order li button { padding: 0 8px; background: transparent; color: var(--muted); }
+.order .empty { color: var(--muted); font-size: 13px; cursor: default; border-style: dashed; }
 .url { display: flex; gap: 8px; margin: 6px 0; }
 .url input { flex: 1; min-width: 0; }
 .url button { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }

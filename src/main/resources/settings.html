@@ -98,7 +98,18 @@
         <label class="row"><span class="lab">人どうしの間隔</span>
           <input type="range" data-key="gap" data-unit="px" min="0" max="400" step="2"><output></output>
         </label>
-        <label class="row"><span class="lab">並ぶ位置</span>
+        <label class="row"><span class="lab">並べ方</span>
+          <select data-key="layout">
+            <option value="row">横一列</option>
+            <option value="column">縦に積む</option>
+            <option value="grid">2段(横に2列)</option>
+          </select><output></output>
+        </label>
+        <label class="row"><span class="lab">画面に収める</span>
+          <input type="checkbox" data-key="fit"><output></output>
+        </label>
+        <p class="hint">人数が多くて画面からはみ出すときに、全員を同じ割合で縮めて、収めます。</p>
+        <label class="row"><span class="lab">寄せる位置</span>
           <select data-key="align">
             <option value="left">左寄せ</option>
             <option value="center">中央</option>
@@ -108,6 +119,59 @@
         <label class="row"><span class="lab">名前を表示する</span>
           <input type="checkbox" data-key="names"><output></output>
         </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>登場と退場</legend>
+        <label class="row"><span class="lab">入ってきたとき</span>
+          <select data-key="enter">
+            <option value="fade">ふわっと</option>
+            <option value="slide">下からせり上がる</option>
+            <option value="pop">ぽんと大きくなる</option>
+            <option value="drop">上から落ちる</option>
+            <option value="none">すぐ出る</option>
+          </select><output></output>
+        </label>
+        <label class="row"><span class="lab">出ていくとき</span>
+          <select data-key="leave">
+            <option value="fade">ふわっと</option>
+            <option value="slide">下へ沈む</option>
+            <option value="pop">ぽんと小さくなる</option>
+            <option value="drop">上へ抜ける</option>
+            <option value="none">すぐ消える</option>
+          </select><output></output>
+        </label>
+        <label class="row"><span class="lab">かかる時間</span>
+          <input type="range" data-key="animMs" data-unit="ms" min="100" max="1500" step="10"><output></output>
+        </label>
+        <p class="hint"><button type="button" id="trial">入退室を試す</button> 一人が出て、また入ってきます。</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>並び順</legend>
+        <label class="row"><span class="lab">並べ方の決め方</span>
+          <select data-key="orderMode">
+            <option value="auto">自動(通話の順)</option>
+            <option value="manual">手動(下の順番)</option>
+          </select><output></output>
+        </label>
+        <p class="hint">下の一覧の人を、ドラッグして並べ替えると、手動になります。通話にいない人も、順番を覚えておけます(✕で一覧から外せます)。一覧にいない人は、いちばん後ろに並びます。</p>
+        <ul id="orderList" class="order"></ul>
+      </fieldset>
+
+      <fieldset>
+        <legend>コラボ用の共有アドレス</legend>
+        <div class="url">
+          <input type="text" id="shareUrl" readonly placeholder="まだ発行していません">
+          <button type="button" id="shareCopy">コピー</button>
+        </div>
+        <div class="url">
+          <button type="button" id="shareIssue">発行する</button>
+          <button type="button" id="shareReset">作り直す</button>
+          <button type="button" id="shareOff">停止する</button>
+        </div>
+        <p class="hint">コラボ相手の OBS に貼ってもらうと、あなたと同じ並び・同じ見た目の画面が出ます(見るだけで、設定は変えられません)。
+          作り直す、または停止すると、いままでの共有アドレスは使えなくなります。</p>
       </fieldset>
 
       <fieldset>

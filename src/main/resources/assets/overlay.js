@@ -13,6 +13,14 @@
     var anim = 'hop';
     var releaseMs = 150;       // how long a person keeps looking "speaking" after the voice stops
     var stopNow = false;       // stop moving at once instead of finishing the hop that is under way
+    var layout = 'row';        // row, column or grid (two lines)
+    var fitOn = true;          // shrink everybody so that they all fit on the screen
+    var manual = false;        // use the order the streamer chose
+    var order = [];            // ids in that order
+    var leaveMs = 410;         // how long a leaving person is kept (the leave animation)
+    var gapPx = 24;
+    var hopPercent = 2;
+    var layoutQueued = false;
 
     function setTalking(el, on) {
       var fig = el.firstChild;
@@ -48,6 +56,19 @@
       st.setProperty('--squash', s.squash / 100);
       st.setProperty('--tilt', s.tilt + 'deg');
       stage.classList.toggle('names', !!s.names);
+      layout = s.layout || 'row';
+      fitOn = s.fit !== false;
+      manual = s.orderMode === 'manual';
+      order = (s.order || []).map(function (o) { return o.id; });
+      gapPx = s.gap;
+      hopPercent = s.hopHeight || 0;
+      stage.dataset.layout = layout;
+      stage.dataset.enter = s.enter || 'fade';
+      stage.dataset.leave = s.leave || 'fade';
+      var ms = s.animMs || 350;
+      st.setProperty('--anim', ms + 'ms');
+      leaveMs = (s.leave === 'none') ? 0 : ms + 60;
+      relayout();
       releaseMs = Math.max(0, (s.release === undefined ? 0.15 : s.release) * 1000);
       stopNow = s.stopMode === 'now';
       if (s.anim !== anim) {
@@ -95,8 +116,64 @@
       if (fig.dataset && fig.dataset.want === '0') fig.classList.remove('a-hop', 'a-pulse');
     });
 
+    // The people in the order the streamer chose; those who are not in it come after, in the order of the channel.
+    function arranged(people) {
+      if (!manual || order.length === 0) return people;
+      var rank = {};
+      order.forEach(function (id, i) { rank[id] = i; });
+      return people.map(function (p, i) { return { p: p, k: rank[p.id] === undefined ? order.length + i : rank[p.id] }; })
+        .sort(function (a, b) { return a.k - b.k; })
+        .map(function (x) { return x.p; });
+    }
+
+    // Shrinks everybody (and the gaps) by one factor so that all of them fit on the screen in the chosen layout.
+    function relayout() {
+      if (layoutQueued) return;
+      layoutQueued = true;
+      requestAnimationFrame(function () {
+        layoutQueued = false;
+        var items = [];
+        nodes.forEach(function (el) { if (!el.classList.contains('out')) items.push(el); });
+        var n = items.length;
+        var cols = layout === 'grid' ? Math.max(1, Math.ceil(n / 2)) : n;
+        stage.style.setProperty('--cols', Math.max(1, cols));
+        stage.style.setProperty('--fit', 1);
+        if (!fitOn || n === 0) return;
+        var cs = getComputedStyle(stage);
+        var availW = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        var h0 = items.reduce(function (m, el) { return Math.max(m, el.offsetHeight); }, 0);
+        var availH = stage.clientHeight - parseFloat(cs.paddingBottom) - parseFloat(cs.paddingTop) - h0 * hopPercent / 100;
+        var w = items.map(function (el) { return el.offsetWidth; });
+        var h = items.map(function (el) { return el.offsetHeight; });
+        var needW, needH;
+        if (layout === 'column') {
+          needW = Math.max.apply(null, w);
+          needH = h.reduce(function (a, b) { return a + b; }, 0) + gapPx * (n - 1);
+        } else if (layout === 'grid') {
+          var rows = n > cols ? 2 : 1;
+          var colW = [], rowH = [];
+          items.forEach(function (el, i) {
+            var c = i % cols, r = Math.floor(i / cols);
+            colW[c] = Math.max(colW[c] || 0, w[i]);
+            rowH[r] = Math.max(rowH[r] || 0, h[i]);
+          });
+          needW = colW.reduce(function (a, b) { return a + b; }, 0) + gapPx * (cols - 1);
+          needH = rowH.reduce(function (a, b) { return a + b; }, 0) + gapPx * (rows - 1);
+        } else {
+          needW = w.reduce(function (a, b) { return a + b; }, 0) + gapPx * (n - 1);
+          needH = h0;
+        }
+        var fit = Math.min(1, availW / Math.max(1, needW), availH / Math.max(1, needH));
+        stage.style.setProperty('--fit', Math.max(0.1, fit).toFixed(4));
+      });
+    }
+
+    // a picture that finishes loading changes the size of its person
+    stage.addEventListener('load', relayout, true);
+    window.addEventListener('resize', relayout);
+
     function render(state) {
-      var people = state.people || [];
+      var people = arranged(state.people || []);
       var seen = new Set();
       people.forEach(function (p) {
         seen.add(p.id);
@@ -105,6 +182,7 @@
         el.classList.remove('out');
         update(el, p);
       });
+      relayout();
       var prev = null;
       people.forEach(function (p) {
         var el = nodes.get(p.id);
@@ -115,13 +193,15 @@
       nodes.forEach(function (el, id) {
         if (seen.has(id) || el.classList.contains('out')) return;
         el.classList.add('out');
-        setTimeout(function () {
+        var gone = function () {
           if (el.classList.contains('out')) {
             clearTimeout(el._off);
             el.remove();
             if (nodes.get(id) === el) nodes.delete(id);
+            relayout();
           }
-        }, 400);
+        };
+        if (leaveMs <= 0) gone(); else setTimeout(gone, leaveMs);
       });
     }
 

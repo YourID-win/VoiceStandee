@@ -188,4 +188,28 @@ class StandeeStoreTest {
         assertTrue(store.readImage("secret").isEmpty());
         assertTrue(store.readImage(null).isEmpty());
     }
+
+    @Test
+    void aShareAddressIsIssuedRenewedStoppedAndKept() throws Exception {
+        StandeeStore store = new StandeeStore(dir);
+        assertTrue(store.shareToken(7).isEmpty());
+
+        String first = store.ensureShareToken(7);
+        assertEquals(first, store.ensureShareToken(7), "the same address until it is renewed");
+        assertEquals(7L, store.userForShareToken(first).orElseThrow());
+        assertTrue(store.userForToken(first).isEmpty(), "a share address is not the owner's address");
+
+        String second = store.resetShareToken(7);
+        assertNotEquals(first, second);
+        assertTrue(store.userForShareToken(first).isEmpty(), "the old address stops working");
+        assertEquals(7L, store.userForShareToken(second).orElseThrow());
+
+        StandeeStore reopened = new StandeeStore(dir);
+        assertEquals(7L, reopened.userForShareToken(second).orElseThrow(), "it survives a restart");
+
+        reopened.clearShareToken(7);
+        assertTrue(reopened.shareToken(7).isEmpty());
+        assertTrue(reopened.userForShareToken(second).isEmpty());
+        assertTrue(new StandeeStore(dir).userForShareToken(second).isEmpty());
+    }
 }
