@@ -3,3 +3,6 @@ build/
 *.log
 .env
 data/
+
+# VS Code Java extension build output
+bin/
